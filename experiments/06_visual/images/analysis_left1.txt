@@ -1,0 +1,16 @@
+screenshot   : /home/dlynch/dev/bo1-vr/experiments/06_visual/out/peek_left1_3.png  640x720
+source eye   : 896x1007, shown alone (XRT_WINDOW_PEEK=left)
+
+LEFT eye    background      (140, 15, 15)   -> the LEFT eye's colour (dark red), delta 1
+LEFT eye    corner TL      (255, 255, 0)   -> TL       yellow
+LEFT eye    corner TR      (0, 255, 255)   -> TR       cyan
+LEFT eye    corner BL      (255, 0, 255)   -> BL       magenta
+LEFT eye    corner BR      (0, 0, 255)     -> BR       blue
+LEFT eye    grey ramp       want   0  36  72 109 145 182 218 255
+LEFT eye                    got    0  36  72 109 145 182 218 255
+
+EYE ORDER        : CORRECT -- the LEFT eye alone was displayed and it holds the LEFT eye's content
+ORIENTATION left : CORRECT -- up is up, no mirroring
+COLOUR           : CLEAN -- grey ramp survives end to end, worst step off by 0/255
+
+RESULT: PASS

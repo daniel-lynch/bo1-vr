@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.2.0",
+    "layer": {
+        "name": "VK_LAYER_BO1VR_xlib_surface",
+        "type": "INSTANCE",
+        "library_path": "./libVkLayer_bo1vr_xlib_surface.so",
+        "api_version": "1.3.275",
+        "implementation_version": "1",
+        "description": "Appends VK_KHR_xlib_surface to vkCreateInstance so Monado's XRT_WINDOW_PEEK window can create its SDL surface"
+    }
+}
