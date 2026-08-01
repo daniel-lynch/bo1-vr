@@ -3,11 +3,13 @@
 VR mod scaffolding for **Call of Duty: Black Ops (2010)** running under Proton on Linux.
 
 This repository is the toolchain foundation. It contains a working 32-bit
-`dinput8.dll` ASI loader and four verification experiments. **It hooks nothing in
-the game yet** — but the VR chain itself is no longer hypothetical: a 32-bit
-mingw DLL running under Proton now gets a **live OpenVR function table** from
-xrizer/Monado and calls through it, with no VR hardware attached. See
-`experiments/04_live_fntable/`.
+`dinput8.dll` ASI loader and six verification experiments. **It hooks nothing in
+the game yet** — but the VR chain itself is no longer hypothetical. A 32-bit
+mingw DLL running under Proton gets a **live OpenVR function table** from
+xrizer/Monado and calls through it (`experiments/04_live_fntable/`), and it
+**renders a D3D9 texture through DXVK and submits it for both eyes, with the
+frames observed arriving at Monado** (`experiments/05_submit/`). No VR hardware
+is involved in either.
 
 ---
 
@@ -22,9 +24,11 @@ xrizer/Monado and calls through it, with no VR hardware attached. See
 | Exp. 2 — C++ exceptions across a DLL boundary | **answered, with a surprise** |
 | Exp. 3 — winedbg on a 32-bit target | **answered — works far better than expected** |
 | Exp. 4 — **live OpenVR FnTable from 32-bit under Proton** | **PASS** — non-NULL table, methods called, `WaitGetPoses` returns a valid HMD pose |
+| Exp. 5 — **D3D9/DXVK texture submitted to the compositor** | **PASS** — 600 frames × 2 eyes, counted arriving inside `monado-service` |
 
 Full commands and raw output live in `experiments/*/RESULTS.md`.
-`experiments/04_live_fntable/run.sh` reproduces the gating result end to end.
+`experiments/04_live_fntable/run.sh` and `experiments/05_submit/run.sh` reproduce
+the two gating results end to end.
 
 ---
 
@@ -314,6 +318,42 @@ carries the correct layout, lifted from OpenVR v2.12.14.
 `IVRCompositor_029` is byte-identical between master and v2.12.14, so the
 compositor can keep using `openvr_capi.h`.
 
+### 11. Submit `TextureType_Vulkan`, doing the D3D9 → Vulkan interop ourselves
+
+Settled by measurement in Exp. 5. Read `experiments/05_submit/RESULTS.md` before
+changing it.
+
+Proton *does* translate a DirectX texture to Vulkan for you — but only through
+DXGI. `vrclient_x64/vrcompositor_manual.c`'s `load_compositor_texture_dxvk()`
+`QueryInterface`s the submitted texture for `IID_IDXGIVkInteropSurface`, which is
+DXVK's **D3D11** interop interface. DXVK's D3D9 objects do not implement it (they
+expose `ID3D9VkInteropTexture` instead), and the shipped `vrclient.dll` carries no
+`ID3D9VkInterop*` IID at all. So the QI fails, vrclient logs
+`Invalid D3D11 texture` and forwards the raw `IDirect3DSurface9 *` untranslated,
+and xrizer — whose `SupportedBackend` accepts only `Vulkan` and `OpenGL` — hits
+`panic!("Unsupported texture type: DirectX")` and **kills the process**
+(Decision 9's second bullet). Measured; `BO1VR_TRY_DIRECTX=1` reproduces it.
+
+The working path is for the mod to do the interop itself:
+`IDirect3DDevice9` → `ID3D9VkInteropDevice` for the instance/physical device/
+device/queue, `IDirect3DTexture9` → `ID3D9VkInteropTexture::GetVulkanImageInfo`
+for the `VkImage`, then `Submit` a `Texture_t` whose handle is a
+`VRVulkanTextureData_t` and whose `eType` is `TextureType_Vulkan`. Wrap each
+submit in exactly Proton's own D3D11 sequence — transition to
+`VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL`, `FlushRenderingCommands`,
+`LockSubmissionQueue`, submit, `ReleaseSubmissionQueue`, transition back —
+because that is the source layout xrizer's blit assumes.
+
+Two corollaries worth remembering:
+
+* **`openvr_api_dxvk.dll` is not part of this.** It is a plain copy of Valve's
+  `openvr_api.dll` under another name; DXVK loads it only to read the required
+  Vulkan extension lists. See Correction B.
+* **Shut the VR runtime down before releasing the D3D9 device.** xrizer's OpenXR
+  session is built on the app's own `VkInstance`/`VkDevice`, which DXVK owns.
+  Releasing D3D9 first makes `IVRClientCore_003_Cleanup` fault with `0xc0000005`
+  and the process never exits.
+
 ---
 
 ## Corrections to the original research
@@ -383,17 +423,34 @@ copy happened at prefix creation, so **the stamp is not a reliable predictor.
 Check the actual files** with `file drive_c/windows/syswow64/openvr_api_dxvk.dll`
 before assuming either way.
 
-Why it matters here: DXVK's VR submit path loads `openvr_api_dxvk.dll`, and in a
-32-bit process that name resolves from `syswow64` — which under Proton 10.0-4b
-contains the **64-bit** build, so the load fails.
-
-Workarounds: swap the two files in the prefix after it is created, ship a correct
-`openvr_api_dxvk.dll` next to `BlackOps.exe`, or use Proton Experimental.
+Why it matters: DXVK loads `openvr_api_dxvk.dll`, and in a 32-bit process that
+name resolves from `syswow64` — which under Proton 10.0-4b contains the
+**64-bit** build, so the load fails.
 
 **Re-confirmed in Exp. 4** on a freshly created Proton 10.0-4b prefix:
 `system32` got the 631960-byte i386 build and `syswow64` the 836760-byte x86_64
-build. Exp. 4 does not depend on it — it loads Valve's own 32-bit
-`openvr_api.dll` from beside the exe — but a DXVK compositor submit will.
+build.
+
+**Exp. 5 corrected two things about this**, both worth knowing before spending
+time on it:
+
+* **Swapping the files in the prefix does not stick.** `proton` re-copies both
+  at *every* launch, not at prefix creation. Measured: swap them by hand, launch,
+  and `system32` is back to the i386 build and `syswow64` to the x86_64 one. The
+  durable workaround is to **ship a correct i386 `openvr_api_dxvk.dll` next to
+  the executable** — the application directory precedes the system directories
+  in the search order — or to use Proton Experimental.
+  `experiments/05_submit/run.sh` does the former, and `vrsubmit.c` confirms the
+  fix took by reporting the byte size and PE machine word of the file that was
+  actually loaded rather than assuming.
+* **The bug is inert on this configuration, and the DLL was never on the submit
+  path anyway.** `openvr_api_dxvk.dll` is a plain copy of Valve's
+  `openvr_api.dll` (identical export set, no Vulkan/DXVK/D3D strings, refers to
+  itself internally as `openvr_api.dll`). DXVK loads it purely to call
+  `GetVulkan{Instance,Device}ExtensionsRequired`, and under Proton it does not
+  even do that: `VrInstance::initInstanceExtensions()` reads the extension lists
+  from `HKCU\Software\Wine\VR` when that key exists, which Proton's `steam.exe`
+  creates. It performs **no texture interop** — see Decision 11.
 
 ---
 
@@ -409,13 +466,16 @@ build. Exp. 4 does not depend on it — it loads Valve's own 32-bit
 | Proton installed | 10.0-4b (`proton-10.0-4b`) — meets the 10.0-2 minimum |
 | OpenVR SDK | Valve `openvr` master (`IVRCompositor_029` / `IVRSystem_026`) — but see Decision 9: the chain caps at `IVRSystem_023` |
 | VR runtime | xrizer `be664bb` via the WiVRn flatpak, registered in `~/.config/openvr/openvrpaths.vrpath` |
-| OpenXR runtime | Monado 21.0.0 (`monado-service`), **Simulated HMD** — no VR hardware |
+| OpenXR runtime | Monado 21.0.0 (`21.0.0+git2905.e26a272c1~dfsg1-2build2`), **Simulated HMD** — no VR hardware |
+| D3D9 implementation (Exp. 5) | DXVK v2.6.2-23-g3cb664e1260926e, the `d3d9.dll` Proton 10.0-4b installs |
+| GPU (Exp. 5) | NVIDIA RTX 3080 Ti, proprietary driver 595.84 |
 
 Experiments 0–3 ran on wine-11.0 in classic WoW64 (both wine-11.0 and Proton
 10.0-4b ship a `lib/wine/i386-unix/`, so both *can* do classic WoW64); see
-`experiments/03_winedbg/RESULTS.md`. Experiment 4 deliberately runs on Proton's
-**new-WoW64** (`PROTON_USE_WOW64=1`, `files/bin-wow64/`) — see Decision 9, which
-is the single most important configuration decision in this repository.
+`experiments/03_winedbg/RESULTS.md`. Experiments 4 and 5 deliberately run on
+Proton's **new-WoW64** (`PROTON_USE_WOW64=1`, `files/bin-wow64/`) — see
+Decision 9, which is the single most important configuration decision in this
+repository.
 
 ---
 
@@ -438,9 +498,13 @@ experiments/
   01_openvr_capi/           OpenVR C API reachability + struct-return ABI
   02_cpp_exceptions/        exceptions across a DLL boundary, ±debugger
   03_winedbg/               winedbg and winedbg --gdb against 32-bit
-  04_live_fntable/          THE GATING EXPERIMENT: a live FnTable, called
+  04_live_fntable/          GATE 1: a live FnTable, called
     run.sh                    one-command reproduction (stage, patch, build, run)
     ivrsystem_023.h           the FnTable layout the chain actually speaks
+  05_submit/                GATE 2: a D3D9/DXVK texture reaching the compositor
+    run.sh                    one-command reproduction, incl. Monado-side verification
+    d3d9_dxvk.h               C bindings for DXVK's ID3D9VkInterop* interfaces
+    vk_min.h / vkcheck.c      the Vulkan slice we need, + a static-assert check
 tools/
   patch-proton-wow64-vrclient.py   works around two Proton wow64 vrclient bugs
 ```

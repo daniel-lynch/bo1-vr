@@ -29,7 +29,7 @@ nothing about the ABI.
 | `WaitGetPoses` returning a valid HMD pose | **PASS** |
 | `IVRSystem_023`: render target size, projection, eye transform | **PASS** |
 | Same probe as an `.asi` under the repo's own `dist/dinput8.dll` | **PASS** |
-| Compositor `Submit` of a real texture | **not attempted** — needs a D3D9/DXVK device |
+| Compositor `Submit` of a real texture | **not attempted here** — done in `experiments/05_submit/`, which **PASSES** |
 
 ---
 
@@ -415,11 +415,13 @@ That matches the README's Logging note: log to a file.
 
 ## Not proven
 
-* **Compositor `Submit`.** No texture was submitted. That needs a D3D9 (or
-  Vulkan) device inside the prefix and exercises `openvr_api_dxvk.dll`, whose
-  install directories are swapped in Proton 10.0-4b. This is the next
-  experiment, and it is the one that will decide whether stereo rendering is
-  feasible, not just tracking.
+* **Compositor `Submit`.** No texture was submitted here. **Done in
+  `experiments/05_submit/`, and it passes** — a D3D9 texture rendered through
+  DXVK reaches Monado for both eyes. Two guesses in the paragraph this replaces
+  turned out to be wrong and are corrected there: `openvr_api_dxvk.dll` is not
+  on the submit path at all (it is a plain `openvr_api.dll` under another name),
+  and Proton's DirectX→Vulkan bridge covers D3D11/D3D12 only, so the app must do
+  the D3D9→Vulkan interop itself.
 * **Real hardware.** Everything here is against Monado's Simulated HMD. WiVRn
   was not used.
 * **`BlackOps.exe` itself.** The game is not installed on this machine, so the
