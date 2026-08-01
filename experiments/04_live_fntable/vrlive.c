@@ -261,4 +261,34 @@ __declspec(dllexport) int vrlive_run(void)
     return fail ? 10 : 0;
 }
 
+#ifdef BO1VR_ASI
+/* ASI shape: this same translation unit built as vrlive.asi, so the real
+ * dist/dinput8.dll ASI loader picks it up. asi_load_all() runs inside
+ * DllMain(DLL_PROCESS_ATTACH) of dinput8.dll, i.e. UNDER THE LOADER LOCK, so
+ * the plugin must not do any real work there: LoadLibrary from DllMain is a
+ * deadlock waiting to happen. Spawn a thread and get out. The named event lets
+ * the host wait for a result without polling a file. */
+static DWORD WINAPI vrlive_thread(void *arg)
+{
+    HANDLE done;
+    (void)arg;
+    vrlive_run();
+    done = CreateEventA(NULL, TRUE, FALSE, "bo1vr_exp04_done");
+    if (done) { SetEvent(done); }
+    return 0;
+}
+
+BOOL WINAPI DllMain(HINSTANCE i, DWORD r, LPVOID v)
+{
+    (void)v;
+    if (r == DLL_PROCESS_ATTACH) {
+        HANDLE t;
+        DisableThreadLibraryCalls(i);
+        t = CreateThread(NULL, 0, vrlive_thread, NULL, 0, NULL);
+        if (t) CloseHandle(t);
+    }
+    return TRUE;
+}
+#else
 BOOL WINAPI DllMain(HINSTANCE i, DWORD r, LPVOID v) { (void)i;(void)r;(void)v; return TRUE; }
+#endif

@@ -28,6 +28,7 @@ nothing about the ABI.
 | Calling `__stdcall` methods through the table | **PASS** |
 | `WaitGetPoses` returning a valid HMD pose | **PASS** |
 | `IVRSystem_023`: render target size, projection, eye transform | **PASS** |
+| Same probe as an `.asi` under the repo's own `dist/dinput8.dll` | **PASS** |
 | Compositor `Submit` of a real texture | **not attempted** — needs a D3D9/DXVK device |
 
 ---
@@ -344,6 +345,7 @@ unavailable under new-WoW64 until Proton is fixed.**
 
 ```sh
 ./run.sh                     # everything: stage, patch, build, run
+make asi                     # the same probe as a real .asi plugin (below)
 WORK=/some/dir ./run.sh      # choose the scratch directory
 XRIZER_SRC=/path/to/xrizer ./run.sh
 BO1VR_ABI_HAM=1 ./run.sh     # additionally reproduce the GetHiddenAreaMesh fault
@@ -388,6 +390,29 @@ RESULT: PASS
 
 ---
 
+## It also works in the real deployment shape
+
+`make asi` builds the same translation unit as `out/asi/vrlive.asi` and stages it
+beside the repository's own `dist/dinput8.dll`. `out/asi/asihost.exe` stands in
+for `BlackOps.exe`: it does nothing but `LoadLibraryA("./dinput8.dll")` and wait.
+The loader's `asi_load_all()` then finds and loads `vrlive.asi`, and the full
+experiment runs and passes — `out/asi/vrlive.log` ends in
+`=== EXPERIMENT 4 END: PASS ===` and `asihost.exe` exits 0.
+
+The one thing the `.asi` must get right: **`asi_load_all()` runs inside
+`DllMain(DLL_PROCESS_ATTACH)` of `dinput8.dll`, i.e. under the loader lock.** A
+plugin that called `LoadLibraryA("openvr_api.dll")` and `VR_InitInternal2`
+directly from its own `DllMain` would be doing a nested `LoadLibrary` under the
+lock. `vrlive.asi` therefore does nothing but `CreateThread` and return; the
+worker signals a named event when it is done. Any real VR plugin must follow the
+same pattern.
+
+Note that neither the loader's own `LOGI("asi: ...")` output nor the plugin's
+`stderr` reached the launching shell under `proton run` — only the file log did.
+That matches the README's Logging note: log to a file.
+
+---
+
 ## Not proven
 
 * **Compositor `Submit`.** No texture was submitted. That needs a D3D9 (or
@@ -397,9 +422,9 @@ RESULT: PASS
   feasible, not just tracking.
 * **Real hardware.** Everything here is against Monado's Simulated HMD. WiVRn
   was not used.
-* **`BlackOps.exe` itself.** The game is not installed on this machine; the
-  32-bit DLL was loaded by a purpose-built host, and not yet as an `.asi`
-  through `dist/dinput8.dll`.
+* **`BlackOps.exe` itself.** The game is not installed on this machine, so the
+  host executable is a stand-in. The *loader path* is real, though — see the
+  section above.
 * **Whether Proton Experimental 11 needs the same patches.** It ships no
   `files/bin-wow64/`, so `PROTON_USE_WOW64=1` selects a different code path
   there and was not tested.
