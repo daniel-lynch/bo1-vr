@@ -1,5 +1,9 @@
-# Build output
-build/
+# Build output.
+# NOTE the leading slash: an unanchored "build/" also matches
+# third_party/minhook/build/, which is where MinHook's MinGW makefile lives --
+# the one file the whole build depends on. Without the slash a fresh clone fails
+# with "No rule to make target 'build/MinGW/Makefile'".
+/build/
 dist/*.dll
 dist/*.asi
 dist/*.a
