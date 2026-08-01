@@ -1,0 +1,27 @@
+; winmm.def -- the eleven names BlackOps.exe imports from WINMM.dll.
+;
+; Taken from the game's own import directory, not from mmsystem.h:
+;   pefile -> DIRECTORY_ENTRY_IMPORT["WINMM.dll"]
+;     mixerSetControlDetails timeEndPeriod timeBeginPeriod
+;     mixerGetControlDetailsA mixerGetLineControlsA mixerClose
+;     mixerGetLineInfoA mixerOpen mixerGetNumDevs waveInGetNumDevs timeGetTime
+;
+; All by name, none by ordinal -- which is why winmm was chosen over
+; XINPUT1_3.dll / DSOUND.dll, both of which BlackOps.exe imports by ordinal.
+;
+; Undecorated, for the same reason dinput8.def is (README Decision 3): the
+; import table spells them without the stdcall @N suffix.
+
+LIBRARY winmm
+EXPORTS
+    mixerClose
+    mixerGetControlDetailsA
+    mixerGetLineControlsA
+    mixerGetLineInfoA
+    mixerGetNumDevs
+    mixerOpen
+    mixerSetControlDetails
+    timeBeginPeriod
+    timeEndPeriod
+    timeGetTime
+    waveInGetNumDevs
