@@ -1,0 +1,2592 @@
+0065e6b0  fld dword ptr [0xa4e390]          
+0065e6b6  push 0x9dd354                     
+0065e6bb  push 0x80                         
+0065e6c0  sub esp, 0xc                      
+0065e6c3  fstp dword ptr [esp + 8]          
+0065e6c7  fldz                              
+0065e6c9  fstp dword ptr [esp + 4]          
+0065e6cd  fld dword ptr [0x9f1e54]          
+0065e6d3  fstp dword ptr [esp]              
+0065e6d6  push 0x9dee50                      ;"bg_viewKickScale"
+0065e6db  call 0x679020                     
+0065e6e0  fld dword ptr [0xa13a24]          
+0065e6e6  add esp, 0x18                     
+0065e6e9  push 0x9dd354                     
+0065e6ee  push 0x1080                       
+0065e6f3  sub esp, 0xc                      
+0065e6f6  fst dword ptr [esp + 8]           
+0065e6fa  mov dword ptr [0xbcd0f8], eax     
+0065e6ff  fldz                              
+0065e701  fstp dword ptr [esp + 4]          
+0065e705  fstp dword ptr [esp]              
+0065e708  push 0xa2bb34                      ;"bg_viewKickMax"
+0065e70d  call 0x679020                     
+0065e712  fld dword ptr [0xa13a24]          
+0065e718  add esp, 0x18                     
+0065e71b  push 0x9dd354                     
+0065e720  push 0x1080                       
+0065e725  sub esp, 0xc                      
+0065e728  fstp dword ptr [esp + 8]          
+0065e72c  mov dword ptr [0xbcd214], eax     
+0065e731  fldz                              
+0065e733  fstp dword ptr [esp + 4]          
+0065e737  fld dword ptr [0x9b449c]          
+0065e73d  fstp dword ptr [esp]              
+0065e740  push 0x9b588c                      ;"bg_viewKickMin"
+0065e745  call 0x679020                     
+0065e74a  fld1                              
+0065e74c  add esp, 0x18                     
+0065e74f  push 0x9dd354                     
+0065e754  push 0x1080                       
+0065e759  sub esp, 0xc                      
+0065e75c  fstp dword ptr [esp + 8]          
+0065e760  mov dword ptr [0xbcd05c], eax     
+0065e765  fldz                              
+0065e767  fstp dword ptr [esp + 4]          
+0065e76b  fld dword ptr [0x9e28e4]          
+0065e771  fstp dword ptr [esp]              
+0065e774  push 0xa03988                      ;"bg_viewKickRandom"
+0065e779  call 0x679020                     
+0065e77e  fld dword ptr [0xa13a24]          
+0065e784  add esp, 0x18                     
+0065e787  push 0x9dd354                     
+0065e78c  push 0x3080                       
+0065e791  sub esp, 0xc                      
+0065e794  fstp dword ptr [esp + 8]          
+0065e798  mov dword ptr [0xbcd204], eax     
+0065e79d  fld dword ptr [0x9ce618]          
+0065e7a3  fstp dword ptr [esp + 4]          
+0065e7a7  fld dword ptr [0xa0aaa0]          
+0065e7ad  fstp dword ptr [esp]              
+0065e7b0  push 0x9fcde4                      ;"player_view_pitch_up"
+0065e7b5  call 0x679020                     
+0065e7ba  fld dword ptr [0xa13a24]          
+0065e7c0  add esp, 0x18                     
+0065e7c3  push 0x9dd354                     
+0065e7c8  push 0x3080                       
+0065e7cd  sub esp, 0xc                      
+0065e7d0  fstp dword ptr [esp + 8]          
+0065e7d4  mov dword ptr [0xbcaf04], eax     
+0065e7d9  fld dword ptr [0x9ce618]          
+0065e7df  fstp dword ptr [esp + 4]          
+0065e7e3  fld dword ptr [0xa0aaa0]          
+0065e7e9  fstp dword ptr [esp]              
+0065e7ec  push 0x9bd7e4                      ;"player_view_pitch_down"
+0065e7f1  call 0x679020                     
+0065e7f6  fld dword ptr [0xa4e3b4]          
+0065e7fc  add esp, 0x18                     
+0065e7ff  push 0x9dd354                     
+0065e804  push 0x80                         
+0065e809  mov dword ptr [0xbcaebc], eax     
+0065e80e  sub esp, 0x10                     
+0065e811  fstp dword ptr [esp + 0xc]        
+0065e815  fldz                              
+0065e817  fstp dword ptr [esp + 8]          
+0065e81b  fld dword ptr [0x9cb7ec]          
+0065e821  fstp dword ptr [esp + 4]          
+0065e825  fld dword ptr [0x9d2b50]          
+0065e82b  fstp dword ptr [esp]              
+0065e82e  push 0x9aaac4                      ;"player_lean_shift"
+0065e833  call 0x4372d0                     
+0065e838  fld dword ptr [0xa4e3b4]          
+0065e83e  add esp, 0x1c                     
+0065e841  push 0x9dd354                     
+0065e846  push 0x80                         
+0065e84b  sub esp, 0x10                     
+0065e84e  fstp dword ptr [esp + 0xc]        
+0065e852  mov dword ptr [0xbcd03c], eax     
+0065e857  fldz                              
+0065e859  fstp dword ptr [esp + 8]          
+0065e85d  fld dword ptr [0x9cb7ec]          
+0065e863  fstp dword ptr [esp + 4]          
+0065e867  fld dword ptr [0xa35568]          
+0065e86d  fstp dword ptr [esp]              
+0065e870  push 0xa20a28                      ;"player_lean_shift_crouch"
+0065e875  call 0x4372d0                     
+0065e87a  fld dword ptr [0xa1c604]          
+0065e880  add esp, 0x1c                     
+0065e883  push 0x9dd354                     
+0065e888  push 0x80                         
+0065e88d  sub esp, 0x10                     
+0065e890  fstp dword ptr [esp + 0xc]        
+0065e894  mov dword ptr [0xbcd118], eax     
+0065e899  fldz                              
+0065e89b  fstp dword ptr [esp + 8]          
+0065e89f  fld dword ptr [0xa0e9a4]          
+0065e8a5  fst dword ptr [esp + 4]           
+0065e8a9  fstp dword ptr [esp]              
+0065e8ac  push 0x9ab77c                      ;"player_lean_rotate"
+0065e8b1  call 0x4372d0                     
+0065e8b6  fld dword ptr [0xa32ea4]          
+0065e8bc  add esp, 0x1c                     
+0065e8bf  push 0x9dd354                     
+0065e8c4  push 0x80                         
+0065e8c9  sub esp, 0x14                     
+0065e8cc  fstp dword ptr [esp + 0x10]       
+0065e8d0  mov dword ptr [0xbcd038], eax     
+0065e8d5  fld dword ptr [0xa498dc]          
+0065e8db  fstp dword ptr [esp + 0xc]        
+0065e8df  fld dword ptr [0xa1315c]          
+0065e8e5  fst dword ptr [esp + 8]           
+0065e8e9  fstp dword ptr [esp + 4]          
+0065e8ed  fld dword ptr [0xa1c604]          
+0065e8f3  fstp dword ptr [esp]              
+0065e8f6  push 0x9f126c                     
+0065e8fb  call 0x601fa0                     
+0065e900  fld dword ptr [0xa32ea4]          
+0065e906  add esp, 0x20                     
+0065e909  push 0x9dd354                     
+0065e90e  push 0x80                         
+0065e913  sub esp, 0x14                     
+0065e916  fstp dword ptr [esp + 0x10]       
+0065e91a  mov dword ptr [0xbcaf50], eax     
+0065e91f  fld dword ptr [0xa498dc]          
+0065e925  fstp dword ptr [esp + 0xc]        
+0065e929  fld dword ptr [0xa1315c]          
+0065e92f  fst dword ptr [esp + 8]           
+0065e933  fstp dword ptr [esp + 4]          
+0065e937  fld dword ptr [0xa1c604]          
+0065e93d  fstp dword ptr [esp]              
+0065e940  push 0x9b5700                      ;"bg_weaponForcedLowPistolsOffset"
+0065e945  call 0x601fa0                     
+0065e94a  fld dword ptr [0xa32ea4]          
+0065e950  add esp, 0x20                     
+0065e953  push 0x9dd354                     
+0065e958  push 0x80                         
+0065e95d  sub esp, 0x14                     
+0065e960  fstp dword ptr [esp + 0x10]       
+0065e964  mov dword ptr [0xbcd198], eax     
+0065e969  fld dword ptr [0xa498dc]          
+0065e96f  fstp dword ptr [esp + 0xc]        
+0065e973  fldz                              
+0065e975  fst dword ptr [esp + 8]           
+0065e979  fst dword ptr [esp + 4]           
+0065e97d  fstp dword ptr [esp]              
+0065e980  push 0x9a5a38                      ;"bg_weaponForcedLowMaxAngles"
+0065e985  call 0x601fa0                     
+0065e98a  fld dword ptr [0xa32ea4]          
+0065e990  add esp, 0x20                     
+0065e993  push 0x9dd354                     
+0065e998  push 0x80                         
+0065e99d  sub esp, 0x14                     
+0065e9a0  fstp dword ptr [esp + 0x10]       
+0065e9a4  mov dword ptr [0xbcd168], eax     
+0065e9a9  fld dword ptr [0xa498dc]          
+0065e9af  fstp dword ptr [esp + 0xc]        
+0065e9b3  fldz                              
+0065e9b5  fst dword ptr [esp + 8]           
+0065e9b9  fst dword ptr [esp + 4]           
+0065e9bd  fstp dword ptr [esp]              
+0065e9c0  push 0xa125ac                      ;"bg_weaponForcedLowMaxAnglesPistolsOffset"
+0065e9c5  call 0x601fa0                     
+0065e9ca  fld dword ptr [0xa1c604]          
+0065e9d0  add esp, 0x20                     
+0065e9d3  push 0x9dd354                     
+0065e9d8  push 0x80                         
+0065e9dd  sub esp, 0x10                     
+0065e9e0  fstp dword ptr [esp + 0xc]        
+0065e9e4  mov dword ptr [0xbcafbc], eax     
+0065e9e9  fldz                              
+0065e9eb  fstp dword ptr [esp + 8]          
+0065e9ef  fld1                              
+0065e9f1  fst dword ptr [esp + 4]           
+0065e9f5  fstp dword ptr [esp]              
+0065e9f8  push 0xa0526c                      ;"player_lean_rotate_crouch"
+0065e9fd  call 0x4372d0                     
+0065ea02  push 0x9dd354                     
+0065ea07  push 0                            
+0065ea09  push 1                            
+0065ea0b  push 0xa28e28                      ;"player_useSlopeAnims"
+0065ea10  mov dword ptr [0xbcd20c], eax     
+0065ea15  call 0x45bb20                     
+0065ea1a  fld dword ptr [0x9ebe34]          
+0065ea20  add esp, 0x2c                     
+0065ea23  push 0x9dd354                     
+0065ea28  push 0x2080                       
+0065ea2d  sub esp, 0xc                      
+0065ea30  fstp dword ptr [esp + 8]          
+0065ea34  mov dword ptr [0xbcd140], eax     
+0065ea39  fldz                              
+0065ea3b  fstp dword ptr [esp + 4]          
+0065ea3f  fld dword ptr [0xa32ea4]          
+0065ea45  fstp dword ptr [esp]              
+0065ea48  push 0xa1a4dc                      ;"bg_ladder_yawcap"
+0065ea4d  call 0x679020                     
+0065ea52  fld dword ptr [0x9ebe34]          
+0065ea58  add esp, 0x18                     
+0065ea5b  push 0x9dd354                     
+0065ea60  push 0x2080                       
+0065ea65  sub esp, 0xc                      
+0065ea68  fstp dword ptr [esp + 8]          
+0065ea6c  mov dword ptr [0xbcd1e4], eax     
+0065ea71  fldz                              
+0065ea73  fstp dword ptr [esp + 4]          
+0065ea77  fld dword ptr [0xa0aaa0]          
+0065ea7d  fstp dword ptr [esp]              
+0065ea80  push 0x9eaed0                      ;"bg_prone_yawcap"
+0065ea85  call 0x679020                     
+0065ea8a  fld dword ptr [0xa470f4]          
+0065ea90  add esp, 0x18                     
+0065ea93  push 0x9dd354                     
+0065ea98  push 0x2080                       
+0065ea9d  sub esp, 0xc                      
+0065eaa0  fstp dword ptr [esp + 8]          
+0065eaa4  mov dword ptr [0xbcd0b0], eax     
+0065eaa9  fldz                              
+0065eaab  fstp dword ptr [esp + 4]          
+0065eaaf  fld dword ptr [0xa33860]          
+0065eab5  fstp dword ptr [esp]              
+0065eab8  push 0xa1d540                      ;"bg_foliagesnd_minspeed"
+0065eabd  call 0x679020                     
+0065eac2  add esp, 0x18                     
+0065eac5  mov dword ptr [0xbcaf20], eax     
+0065eaca  push 0x9dd354                     
+0065eacf  fld dword ptr [0xa470f4]          
+0065ead5  push 0x2080                       
+0065eada  sub esp, 0xc                      
+0065eadd  fstp dword ptr [esp + 8]          
+0065eae1  fldz                              
+0065eae3  fstp dword ptr [esp + 4]          
+0065eae7  fld dword ptr [0x9defb4]          
+0065eaed  fstp dword ptr [esp]              
+0065eaf0  push 0xa44ce4                      ;"bg_foliagesnd_maxspeed"
+0065eaf5  call 0x679020                     
+0065eafa  push 0x9dd354                     
+0065eaff  push 0x2080                       
+0065eb04  push 0x7fffffff                   
+0065eb09  push 0                            
+0065eb0b  push 0x5dc                        
+0065eb10  push 0xa412a4                      ;"bg_foliagesnd_slowinterval"
+0065eb15  mov dword ptr [0xbcd224], eax     
+0065eb1a  call 0x651910                     
+0065eb1f  push 0x9dd354                     
+0065eb24  push 0x2080                       
+0065eb29  push 0x7fffffff                   
+0065eb2e  push 0                            
+0065eb30  push 0x1f4                        
+0065eb35  push 0x9cfaec                     
+0065eb3a  mov dword ptr [0xbcd0ec], eax     
+0065eb3f  call 0x651910                     
+0065eb44  add esp, 0x48                     
+0065eb47  push 0x9dd354                     
+0065eb4c  push 0x2080                       
+0065eb51  push 0x7fffffff                   
+0065eb56  push 0                            
+0065eb58  push 0x1f4                        
+0065eb5d  push 0xa13594                      ;"bg_foliagesnd_resetinterval"
+0065eb62  mov dword ptr [0xbcd060], eax     
+0065eb67  call 0x651910                     
+0065eb6c  push 0x9dd354                     
+0065eb71  push 0x2080                       
+0065eb76  push 0x7fffffff                   
+0065eb7b  push 0                            
+0065eb7d  push 0                            
+0065eb7f  push 0xa1c7d4                      ;"scr_friendlyfire"
+0065eb84  mov dword ptr [0xbcd0d0], eax     
+0065eb89  call 0x651910                     
+0065eb8e  fld dword ptr [0xa470f4]          
+0065eb94  add esp, 0x30                     
+0065eb97  push 0x9dd354                     
+0065eb9c  push 0x2080                       
+0065eba1  sub esp, 0xc                      
+0065eba4  fstp dword ptr [esp + 8]          
+0065eba8  mov dword ptr [0xbcd23c], eax     
+0065ebad  fld1                              
+0065ebaf  fstp dword ptr [esp + 4]          
+0065ebb3  fld dword ptr [0x9fa6ac]          
+0065ebb9  fstp dword ptr [esp]              
+0065ebbc  push 0xa4be38                      ;"bg_fallDamageMinHeight"
+0065ebc1  call 0x679020                     
+0065ebc6  fld dword ptr [0xa470f4]          
+0065ebcc  add esp, 0x18                     
+0065ebcf  push 0x9dd354                     
+0065ebd4  push 0x2080                       
+0065ebd9  sub esp, 0xc                      
+0065ebdc  fstp dword ptr [esp + 8]          
+0065ebe0  mov dword ptr [0xbcd1a4], eax     
+0065ebe5  fld1                              
+0065ebe7  fstp dword ptr [esp + 4]          
+0065ebeb  fld dword ptr [0xa4c928]          
+0065ebf1  fstp dword ptr [esp]              
+0065ebf4  push 0x9a4ed0                      ;"bg_fallDamageMaxHeight"
+0065ebf9  call 0x679020                     
+0065ebfe  fld dword ptr [0xa32ea4]          
+0065ec04  add esp, 0x18                     
+0065ec07  push 0x9dd354                     
+0065ec0c  push 0x2080                       
+0065ec11  sub esp, 0xc                      
+0065ec14  fstp dword ptr [esp + 8]          
+0065ec18  mov dword ptr [0xbcd080], eax     
+0065ec1d  fldz                              
+0065ec1f  fstp dword ptr [esp + 4]          
+0065ec23  fld dword ptr [0xa3ea68]          
+0065ec29  fstp dword ptr [esp]              
+0065ec2c  push 0x9efad4                      ;"friction"
+0065ec31  call 0x679020                     
+0065ec36  fld dword ptr [0x9f2500]          
+0065ec3c  add esp, 0x18                     
+0065ec3f  push 0x9dd354                     
+0065ec44  push 0x2080                       
+0065ec49  sub esp, 0xc                      
+0065ec4c  fstp dword ptr [esp + 8]          
+0065ec50  mov dword ptr [0xbcd0bc], eax     
+0065ec55  fldz                              
+0065ec57  fstp dword ptr [esp + 4]          
+0065ec5b  fld dword ptr [0xa32ea4]          
+0065ec61  fstp dword ptr [esp]              
+0065ec64  push 0xa08540                      ;"stopspeed"
+0065ec69  call 0x679020                     
+0065ec6e  fld dword ptr [0x9f2500]          
+0065ec74  add esp, 0x18                     
+0065ec77  push 0x9dd354                     
+0065ec7c  push 0x2080                       
+0065ec81  sub esp, 0xc                      
+0065ec84  fstp dword ptr [esp + 8]          
+0065ec88  mov dword ptr [0xbcaedc], eax     
+0065ec8d  fld dword ptr [0x9abd88]          
+0065ec93  fstp dword ptr [esp + 4]          
+0065ec97  fld dword ptr [0x9dd618]          
+0065ec9d  fstp dword ptr [esp]              
+0065eca0  push 0xa2e7f0                     
+0065eca5  call 0x679020                     
+0065ecaa  fld dword ptr [0x9d2b50]          
+0065ecb0  add esp, 0x18                     
+0065ecb3  push 0x9dd354                     
+0065ecb8  push 0x80                         
+0065ecbd  sub esp, 0xc                      
+0065ecc0  fstp dword ptr [esp + 8]          
+0065ecc4  mov dword ptr [0xbcaeec], eax     
+0065ecc9  fldz                              
+0065eccb  fstp dword ptr [esp + 4]          
+0065eccf  fld dword ptr [0xa0d9fc]          
+0065ecd5  fstp dword ptr [esp]              
+0065ecd8  push 0xa25c50                      ;"bg_swingSpeed"
+0065ecdd  call 0x679020                     
+0065ece2  fld dword ptr [0x9d2b50]          
+0065ece8  add esp, 0x18                     
+0065eceb  push 0x9dd354                     
+0065ecf0  push 0x80                         
+0065ecf5  sub esp, 0xc                      
+0065ecf8  fstp dword ptr [esp + 8]          
+0065ecfc  mov dword ptr [0xbcaf78], eax     
+0065ed01  fldz                              
+0065ed03  fstp dword ptr [esp + 4]          
+0065ed07  fld dword ptr [0x9e3578]          
+0065ed0d  fstp dword ptr [esp]              
+0065ed10  push 0xa179ac                      ;"bg_proneSwingSpeed"
+0065ed15  call 0x679020                     
+0065ed1a  fld dword ptr [0x9defb4]          
+0065ed20  add esp, 0x18                     
+0065ed23  push 0x9dd354                     
+0065ed28  push 0x80                         
+0065ed2d  sub esp, 0xc                      
+0065ed30  fstp dword ptr [esp + 8]          
+0065ed34  mov dword ptr [0xbcafac], eax     
+0065ed39  fldz                              
+0065ed3b  fstp dword ptr [esp + 4]          
+0065ed3f  fld dword ptr [0xa33860]          
+0065ed45  fstp dword ptr [esp]              
+0065ed48  push 0x9a62f8                      ;"bg_legYawTolerance"
+0065ed4d  call 0x679020                     
+0065ed52  fld dword ptr [0x9defb4]          
+0065ed58  add esp, 0x18                     
+0065ed5b  push 0x9dd354                     
+0065ed60  push 0x80                         
+0065ed65  sub esp, 0xc                      
+0065ed68  fstp dword ptr [esp + 8]          
+0065ed6c  mov dword ptr [0xbcd16c], eax     
+0065ed71  fldz                              
+0065ed73  fstp dword ptr [esp + 4]          
+0065ed77  fld dword ptr [0xa33860]          
+0065ed7d  fstp dword ptr [esp]              
+0065ed80  push 0x9f36a0                      ;"bg_legYawCrouchTolerance"
+0065ed85  call 0x679020                     
+0065ed8a  add esp, 0x18                     
+0065ed8d  mov dword ptr [0xbcaf30], eax     
+0065ed92  fld dword ptr [0x9defb4]          
+0065ed98  push 0x9dd354                     
+0065ed9d  push 0x80                         
+0065eda2  sub esp, 0xc                      
+0065eda5  fstp dword ptr [esp + 8]          
+0065eda9  fldz                              
+0065edab  fstp dword ptr [esp + 4]          
+0065edaf  fld dword ptr [0xa4e3b4]          
+0065edb5  fstp dword ptr [esp]              
+0065edb8  push 0x9de738                      ;"bg_legYawProneTolerance"
+0065edbd  call 0x679020                     
+0065edc2  fld1                              
+0065edc4  add esp, 0x18                     
+0065edc7  push 0x9dd354                     
+0065edcc  push 0                            
+0065edce  sub esp, 0xc                      
+0065edd1  fstp dword ptr [esp + 8]          
+0065edd5  mov dword ptr [0xbcaf74], eax     
+0065edda  fldz                              
+0065eddc  fstp dword ptr [esp + 4]          
+0065ede0  fld dword ptr [0x9df848]          
+0065ede6  fstp dword ptr [esp]              
+0065ede9  push 0x9f9fa0                      ;"bg_viewBobAmplitudeBase"
+0065edee  call 0x679020                     
+0065edf3  fld1                              
+0065edf5  add esp, 0x18                     
+0065edf8  push 0x9dd354                     
+0065edfd  push 0x2080                       
+0065ee02  sub esp, 0x10                     
+0065ee05  fstp dword ptr [esp + 0xc]        
+0065ee09  mov dword ptr [0xbcd0e8], eax     
+0065ee0e  fldz                              
+0065ee10  fstp dword ptr [esp + 8]          
+0065ee14  fld dword ptr [0x9ccd00]           ;->"B`e<loadTestMapNames"
+0065ee1a  fstp dword ptr [esp + 4]          
+0065ee1e  fld dword ptr [0x9e0b6c]          
+0065ee24  fstp dword ptr [esp]              
+0065ee27  push 0x9b3c30                      ;"bg_viewBobAmplitudeSprinting"
+0065ee2c  call 0x4372d0                     
+0065ee31  fld1                              
+0065ee33  add esp, 0x1c                     
+0065ee36  push 0x9dd354                     
+0065ee3b  push 0x2080                       
+0065ee40  sub esp, 0x10                     
+0065ee43  fstp dword ptr [esp + 0xc]        
+0065ee47  mov dword ptr [0xbcd0f0], eax     
+0065ee4c  fldz                              
+0065ee4e  fstp dword ptr [esp + 8]          
+0065ee52  fld dword ptr [0x9fabd0]          
+0065ee58  fst dword ptr [esp + 4]           
+0065ee5c  fstp dword ptr [esp]              
+0065ee5f  push 0x9dc6a4                      ;"bg_viewBobAmplitudeDtp"
+0065ee64  call 0x4372d0                     
+0065ee69  fld dword ptr [0xa4e388]          
+0065ee6f  add esp, 0x1c                     
+0065ee72  push 0x9dd354                     
+0065ee77  push 0x4080                       
+0065ee7c  sub esp, 0x10                     
+0065ee7f  fstp dword ptr [esp + 0xc]        
+0065ee83  mov dword ptr [0xbcaec4], eax     
+0065ee88  fldz                              
+0065ee8a  fstp dword ptr [esp + 8]          
+0065ee8e  fld dword ptr [0x9b5860]          
+0065ee94  fstp dword ptr [esp + 4]          
+0065ee98  fld dword ptr [0xa1c604]          
+0065ee9e  fstp dword ptr [esp]              
+0065eea1  push 0x9fde04                      ;"bg_viewBobAmplitudeSwimming"
+0065eea6  call 0x4372d0                     
+0065eeab  fld1                              
+0065eead  add esp, 0x1c                     
+0065eeb0  push 0x9dd354                     
+0065eeb5  push 0x4080                       
+0065eeba  sub esp, 0x10                     
+0065eebd  fstp dword ptr [esp + 0xc]        
+0065eec1  mov dword ptr [0xbcd07c], eax     
+0065eec6  fldz                              
+0065eec8  fstp dword ptr [esp + 8]          
+0065eecc  fld dword ptr [0x9c6604]          
+0065eed2  fst dword ptr [esp + 4]           
+0065eed6  fstp dword ptr [esp]              
+0065eed9  push 0xa3f818                      ;"bg_viewBobAmplitudeStanding"
+0065eede  call 0x4372d0                     
+0065eee3  fld1                              
+0065eee5  add esp, 0x1c                     
+0065eee8  push 0x9dd354                     
+0065eeed  push 0x3080                       
+0065eef2  sub esp, 0x10                     
+0065eef5  fstp dword ptr [esp + 0xc]        
+0065eef9  mov dword ptr [0xbcaf58], eax     
+0065eefe  fldz                              
+0065ef00  fstp dword ptr [esp + 8]          
+0065ef04  fld dword ptr [0x9c6604]          
+0065ef0a  fst dword ptr [esp + 4]           
+0065ef0e  fstp dword ptr [esp]              
+0065ef11  push 0x9b4ce8                      ;"bg_viewBobAmplitudeStandingAds"
+0065ef16  call 0x4372d0                     
+0065ef1b  fld1                              
+0065ef1d  add esp, 0x1c                     
+0065ef20  push 0x9dd354                     
+0065ef25  push 0x2080                       
+0065ef2a  sub esp, 0x10                     
+0065ef2d  fstp dword ptr [esp + 0xc]        
+0065ef31  mov dword ptr [0xbcaf90], eax     
+0065ef36  fldz                              
+0065ef38  fstp dword ptr [esp + 8]          
+0065ef3c  fld dword ptr [0xa44bec]          
+0065ef42  fst dword ptr [esp + 4]           
+0065ef46  fstp dword ptr [esp]              
+0065ef49  push 0x9f9e2c                      ;"bg_viewBobAmplitudeDucked"
+0065ef4e  call 0x4372d0                     
+0065ef53  fld1                              
+0065ef55  add esp, 0x1c                     
+0065ef58  push 0x9dd354                     
+0065ef5d  push 0x2080                       
+0065ef62  sub esp, 0x10                     
+0065ef65  fstp dword ptr [esp + 0xc]        
+0065ef69  mov dword ptr [0xbcaef8], eax     
+0065ef6e  fldz                              
+0065ef70  fstp dword ptr [esp + 8]          
+0065ef74  fld dword ptr [0xa44bec]          
+0065ef7a  fst dword ptr [esp + 4]           
+0065ef7e  fstp dword ptr [esp]              
+0065ef81  push 0x9ceeb8                      ;"bg_viewBobAmplitudeDuckedAds"
+0065ef86  call 0x4372d0                     
+0065ef8b  fld1                              
+0065ef8d  add esp, 0x1c                     
+0065ef90  push 0x9dd354                     
+0065ef95  push 0x2080                       
+0065ef9a  sub esp, 0x10                     
+0065ef9d  fstp dword ptr [esp + 0xc]        
+0065efa1  mov dword ptr [0xbcaea4], eax     
+0065efa6  fldz                              
+0065efa8  fstp dword ptr [esp + 8]          
+0065efac  fld dword ptr [0x9e6094]          
+0065efb2  fstp dword ptr [esp + 4]          
+0065efb6  fld dword ptr [0x9e3578]          
+0065efbc  fstp dword ptr [esp]              
+0065efbf  push 0x9f1ec0                     
+0065efc4  call 0x4372d0                     
+0065efc9  fld dword ptr [0xa13a24]          
+0065efcf  add esp, 0x1c                     
+0065efd2  push 0x9dd354                     
+0065efd7  push 0x2080                       
+0065efdc  sub esp, 0xc                      
+0065efdf  fstp dword ptr [esp + 8]          
+0065efe3  mov dword ptr [0xbcd084], eax     
+0065efe8  fldz                              
+0065efea  fstp dword ptr [esp + 4]          
+0065efee  fld dword ptr [0xa13658]          
+0065eff4  fstp dword ptr [esp]              
+0065eff7  push 0xa18894                      ;"bg_viewBobAmplitudeRoll"
+0065effc  call 0x679020                     
+0065f001  fld dword ptr [0xa4d624]          
+0065f007  add esp, 0x18                     
+0065f00a  push 0x9dd354                     
+0065f00f  push 0x2080                       
+0065f014  sub esp, 0xc                      
+0065f017  fstp dword ptr [esp + 8]          
+0065f01b  mov dword ptr [0xbcaf54], eax     
+0065f020  fldz                              
+0065f022  fstp dword ptr [esp + 4]          
+0065f026  fld dword ptr [0xa4e388]          
+0065f02c  fstp dword ptr [esp]              
+0065f02f  push 0x9f2d10                      ;"bg_bobMax"
+0065f034  call 0x679020                     
+0065f039  push 0x9dd354                     
+0065f03e  push 0x80                         
+0065f043  push 0x2710                       
+0065f048  push -1                           
+0065f04a  push -1                           
+0065f04c  push 0x9da8f4                      ;"bg_forceDurationOverride"
+0065f051  mov dword ptr [0xbcd21c], eax     
+0065f056  call 0x651910                     
+0065f05b  push 0x9dd354                     
+0065f060  push 0x80                         
+0065f065  push 0x2710                       
+0065f06a  push -1                           
+0065f06c  push -1                           
+0065f06e  push 0x9f6c04                      ;"bg_blendTimeOverride"
+0065f073  mov dword ptr [0xbcae98], eax     
+0065f078  call 0x651910                     
+0065f07d  fld1                              
+0065f07f  add esp, 0x48                     
+0065f082  push 0x9dd354                     
+0065f087  push 0                            
+0065f089  sub esp, 0xc                      
+0065f08c  fstp dword ptr [esp + 8]          
+0065f090  mov dword ptr [0xbcd114], eax     
+0065f095  fldz                              
+0065f097  fstp dword ptr [esp + 4]          
+0065f09b  fld dword ptr [0x9df848]          
+0065f0a1  fstp dword ptr [esp]              
+0065f0a4  push 0x9cfddc                      ;"bg_weaponBobAmplitudeBase"
+0065f0a9  call 0x679020                     
+0065f0ae  fld1                              
+0065f0b0  add esp, 0x18                     
+0065f0b3  push 0x9dd354                     
+0065f0b8  push 0x2080                       
+0065f0bd  sub esp, 0x10                     
+0065f0c0  fstp dword ptr [esp + 0xc]        
+0065f0c4  mov dword ptr [0xbcaf3c], eax     
+0065f0c9  fldz                              
+0065f0cb  fstp dword ptr [esp + 8]          
+0065f0cf  fld dword ptr [0x9ccd00]           ;->"B`e<loadTestMapNames"
+0065f0d5  fstp dword ptr [esp + 4]          
+0065f0d9  fld dword ptr [0x9e0b6c]          
+0065f0df  fstp dword ptr [esp]              
+0065f0e2  push 0xa1577c                      ;"bg_weaponBobAmplitudeSprinting"
+0065f0e7  call 0x4372d0                     
+0065f0ec  fld1                              
+0065f0ee  add esp, 0x1c                     
+0065f0f1  push 0x9dd354                     
+0065f0f6  push 0x2080                       
+0065f0fb  sub esp, 0x10                     
+0065f0fe  fstp dword ptr [esp + 0xc]        
+0065f102  mov dword ptr [0xbcd124], eax     
+0065f107  fldz                              
+0065f109  fstp dword ptr [esp + 8]          
+0065f10d  fld dword ptr [0x9fabd0]          
+0065f113  fst dword ptr [esp + 4]           
+0065f117  fstp dword ptr [esp]              
+0065f11a  push 0x9ba58c                      ;"bg_weaponBobAmplitudeDtp"
+0065f11f  call 0x4372d0                     
+0065f124  fld dword ptr [0xa4e388]          
+0065f12a  add esp, 0x1c                     
+0065f12d  push 0x9dd354                     
+0065f132  push 0x4080                       
+0065f137  sub esp, 0x10                     
+0065f13a  fstp dword ptr [esp + 0xc]        
+0065f13e  mov dword ptr [0xbcafd4], eax     
+0065f143  fldz                              
+0065f145  fstp dword ptr [esp + 8]          
+0065f149  fld dword ptr [0x9dad38]          
+0065f14f  fst dword ptr [esp + 4]           
+0065f153  fstp dword ptr [esp]              
+0065f156  push 0xa2afd4                      ;"bg_weaponBobAmplitudeSwimming"
+0065f15b  call 0x4372d0                     
+0065f160  fld1                              
+0065f162  add esp, 0x1c                     
+0065f165  push 0x9dd354                     
+0065f16a  push 0x4080                       
+0065f16f  mov dword ptr [0xbcaf7c], eax     
+0065f174  sub esp, 0x10                     
+0065f177  fstp dword ptr [esp + 0xc]        
+0065f17b  fldz                              
+0065f17d  fstp dword ptr [esp + 8]          
+0065f181  fld dword ptr [0xa3a9c0]          
+0065f187  fstp dword ptr [esp + 4]          
+0065f18b  fld dword ptr [0xa054b4]          
+0065f191  fstp dword ptr [esp]              
+0065f194  push 0x9d6ac4                      ;"bg_weaponBobAmplitudeStanding"
+0065f199  call 0x4372d0                     
+0065f19e  fld1                              
+0065f1a0  add esp, 0x1c                     
+0065f1a3  push 0x9dd354                     
+0065f1a8  push 0x2080                       
+0065f1ad  sub esp, 0x10                     
+0065f1b0  fstp dword ptr [esp + 0xc]        
+0065f1b4  mov dword ptr [0xbcd22c], eax     
+0065f1b9  fldz                              
+0065f1bb  fstp dword ptr [esp + 8]          
+0065f1bf  fld dword ptr [0xa3a9c0]          
+0065f1c5  fstp dword ptr [esp + 4]          
+0065f1c9  fld dword ptr [0x9b8fa8]          
+0065f1cf  fstp dword ptr [esp]              
+0065f1d2  push 0x9f4ebc                      ;"bg_weaponBobAmplitudeDucked"
+0065f1d7  call 0x4372d0                     
+0065f1dc  fld1                              
+0065f1de  add esp, 0x1c                     
+0065f1e1  push 0x9dd354                     
+0065f1e6  push 0x2080                       
+0065f1eb  sub esp, 0x10                     
+0065f1ee  fstp dword ptr [esp + 0xc]        
+0065f1f2  mov dword ptr [0xbcaf14], eax     
+0065f1f7  fldz                              
+0065f1f9  fstp dword ptr [esp + 8]          
+0065f1fd  fld dword ptr [0x9c2fd8]          
+0065f203  fstp dword ptr [esp + 4]          
+0065f207  fld dword ptr [0x9e0b6c]          
+0065f20d  fstp dword ptr [esp]              
+0065f210  push 0xa04cd0                      ;"bg_weaponBobAmplitudeProne"
+0065f215  call 0x4372d0                     
+0065f21a  fld dword ptr [0xa13a24]          
+0065f220  add esp, 0x1c                     
+0065f223  push 0x9dd354                     
+0065f228  push 0x2080                       
+0065f22d  sub esp, 0xc                      
+0065f230  fstp dword ptr [esp + 8]          
+0065f234  mov dword ptr [0xbcafe0], eax     
+0065f239  fldz                              
+0065f23b  fstp dword ptr [esp + 4]          
+0065f23f  fld dword ptr [0xa13658]          
+0065f245  fstp dword ptr [esp]              
+0065f248  push 0xa13dac                      ;"bg_weaponBobAmplitudeRoll"
+0065f24d  call 0x679020                     
+0065f252  fld dword ptr [0xa4d624]          
+0065f258  add esp, 0x18                     
+0065f25b  push 0x9dd354                     
+0065f260  push 0x2080                       
+0065f265  sub esp, 0xc                      
+0065f268  fstp dword ptr [esp + 8]          
+0065f26c  mov dword ptr [0xbcd184], eax     
+0065f271  fldz                              
+0065f273  fstp dword ptr [esp + 4]          
+0065f277  fld dword ptr [0xa4e388]          
+0065f27d  fstp dword ptr [esp]              
+0065f280  push 0x9c0edc                      ;"bg_weaponBobMax"
+0065f285  call 0x679020                     
+0065f28a  fld1                              
+0065f28c  add esp, 0x18                     
+0065f28f  push 0x9dd354                     
+0065f294  push 0x2080                       
+0065f299  sub esp, 0xc                      
+0065f29c  fstp dword ptr [esp + 8]          
+0065f2a0  mov dword ptr [0xbcaf5c], eax     
+0065f2a5  fld dword ptr [0xa3ad44]          
+0065f2ab  fstp dword ptr [esp + 4]          
+0065f2af  fld dword ptr [0xa28e7c]          
+0065f2b5  fstp dword ptr [esp]              
+0065f2b8  push 0xa3c194                      ;"bg_weaponBobLag"
+0065f2bd  call 0x679020                     
+0065f2c2  add esp, 0x18                     
+0065f2c5  mov dword ptr [0xbcd234], eax     
+0065f2ca  push 0x9dd354                     
+0065f2cf  fld dword ptr [0x9d2b50]          
+0065f2d5  push 0x4080                       
+0065f2da  sub esp, 0xc                      
+0065f2dd  fstp dword ptr [esp + 8]          
+0065f2e1  fldz                              
+0065f2e3  fstp dword ptr [esp + 4]          
+0065f2e7  fld dword ptr [0xa2a2f8]          
+0065f2ed  fstp dword ptr [esp]              
+0065f2f0  push 0xa2d3f4                      ;"bg_weaponBobFrequencySwimming"
+0065f2f5  call 0x679020                     
+0065f2fa  fld dword ptr [0x9f2500]          
+0065f300  add esp, 0x18                     
+0065f303  push 0x9dd354                     
+0065f308  push 0x4080                       
+0065f30d  sub esp, 0xc                      
+0065f310  fstp dword ptr [esp + 8]          
+0065f314  mov dword ptr [0xbcd0f4], eax     
+0065f319  fld1                              
+0065f31b  fstp dword ptr [esp + 4]          
+0065f31f  fld dword ptr [0xa13658]          
+0065f325  fstp dword ptr [esp]              
+0065f328  push 0xa27710                      ;"bg_weaponBobHeavyWeaponScalar"
+0065f32d  call 0x679020                     
+0065f332  push 0x9dd354                     
+0065f337  push 0x180                        
+0065f33c  push 0                            
+0065f33e  push 0xa44940                      ;"bg_forceExplosiveBullets"
+0065f343  mov dword ptr [0xbcd094], eax     
+0065f348  call 0x45bb20                     
+0065f34d  fld dword ptr [0x9f9bd8]          
+0065f353  add esp, 0x28                     
+0065f356  push 0x9dd354                     
+0065f35b  push 0x2080                       
+0065f360  sub esp, 0xc                      
+0065f363  fstp dword ptr [esp + 8]          
+0065f367  mov dword ptr [0xbcd1e8], eax     
+0065f36c  fldz                              
+0065f36e  fstp dword ptr [esp + 4]          
+0065f372  fld dword ptr [0x9edf14]          
+0065f378  fstp dword ptr [esp]              
+0065f37b  push 0x9ceac4                      ;"bg_aimSpreadMoveSpeedThreshold"
+0065f380  call 0x679020                     
+0065f385  fld dword ptr [0x9f2500]          
+0065f38b  add esp, 0x18                     
+0065f38e  push 0x9dd354                     
+0065f393  push 0x2080                       
+0065f398  sub esp, 0xc                      
+0065f39b  fstp dword ptr [esp + 8]          
+0065f39f  mov dword ptr [0xbcaf88], eax     
+0065f3a4  fldz                              
+0065f3a6  fstp dword ptr [esp + 4]          
+0065f3aa  fld dword ptr [0xa32ea4]          
+0065f3b0  fstp dword ptr [esp]              
+0065f3b3  push 0x9dd3b0                      ;"bg_maxGrenadeIndicatorSpeed"
+0065f3b8  call 0x679020                     
+0065f3bd  fld dword ptr [0xa3ddd0]          
+0065f3c3  add esp, 0x18                     
+0065f3c6  push 0x9dd354                     
+0065f3cb  push 0x2080                       
+0065f3d0  sub esp, 0xc                      
+0065f3d3  fstp dword ptr [esp + 8]          
+0065f3d7  mov dword ptr [0xbcaf08], eax     
+0065f3dc  fldz                              
+0065f3de  fstp dword ptr [esp + 4]          
+0065f3e2  fld dword ptr [0x9ca3fc]          
+0065f3e8  fstp dword ptr [esp]              
+0065f3eb  push 0x9a65a8                      ;"player_breath_hold_time"
+0065f3f0  call 0x679020                     
+0065f3f5  fld dword ptr [0xa3ddd0]          
+0065f3fb  add esp, 0x18                     
+0065f3fe  push 0x9dd354                     
+0065f403  push 0x2080                       
+0065f408  sub esp, 0xc                      
+0065f40b  fstp dword ptr [esp + 8]          
+0065f40f  mov dword ptr [0xbcd1d8], eax     
+0065f414  fldz                              
+0065f416  fstp dword ptr [esp + 4]          
+0065f41a  fld1                              
+0065f41c  fstp dword ptr [esp]              
+0065f41f  push 0xa3dfc0                      ;"player_breath_gasp_time"
+0065f424  call 0x679020                     
+0065f429  fld dword ptr [0xa3ddd0]          
+0065f42f  add esp, 0x18                     
+0065f432  push 0x9dd354                     
+0065f437  push 0x2080                       
+0065f43c  sub esp, 0xc                      
+0065f43f  fstp dword ptr [esp + 8]          
+0065f443  mov dword ptr [0xbcd134], eax     
+0065f448  fldz                              
+0065f44a  fst dword ptr [esp + 4]           
+0065f44e  fstp dword ptr [esp]              
+0065f451  push 0x9bc248                      ;"player_breath_fire_delay"
+0065f456  call 0x679020                     
+0065f45b  fld dword ptr [0x9b0fc4]          
+0065f461  add esp, 0x18                     
+0065f464  push 0x9dd354                     
+0065f469  push 0x2080                       
+0065f46e  sub esp, 0xc                      
+0065f471  fstp dword ptr [esp + 8]          
+0065f475  mov dword ptr [0xbcd0e4], eax     
+0065f47a  fldz                              
+0065f47c  fstp dword ptr [esp + 4]          
+0065f480  fld dword ptr [0x9ca3fc]          
+0065f486  fstp dword ptr [esp]              
+0065f489  push 0xa3a01c                      ;"player_breath_gasp_scale"
+0065f48e  call 0x679020                     
+0065f493  fld dword ptr [0x9b0fc4]          
+0065f499  add esp, 0x18                     
+0065f49c  push 0x9dd354                     
+0065f4a1  push 0x2080                       
+0065f4a6  sub esp, 0xc                      
+0065f4a9  fstp dword ptr [esp + 8]          
+0065f4ad  mov dword ptr [0xbcafa8], eax     
+0065f4b2  fldz                              
+0065f4b4  fstp dword ptr [esp + 4]          
+0065f4b8  fld dword ptr [0x9dad38]          
+0065f4be  fstp dword ptr [esp]              
+0065f4c1  push 0x9d2c8c                      ;"player_breath_hold_lerp"
+0065f4c6  call 0x679020                     
+0065f4cb  fld dword ptr [0x9b0fc4]          
+0065f4d1  add esp, 0x18                     
+0065f4d4  push 0x9dd354                     
+0065f4d9  push 0x2080                       
+0065f4de  sub esp, 0xc                      
+0065f4e1  fstp dword ptr [esp + 8]          
+0065f4e5  mov dword ptr [0xbcd104], eax     
+0065f4ea  fldz                              
+0065f4ec  fstp dword ptr [esp + 4]          
+0065f4f0  fld dword ptr [0x9dd618]          
+0065f4f6  fstp dword ptr [esp]              
+0065f4f9  push 0xa09748                      ;"player_breath_gasp_lerp"
+0065f4fe  call 0x679020                     
+0065f503  fld dword ptr [0xa32ea4]          
+0065f509  add esp, 0x18                     
+0065f50c  push 0x9dd354                     
+0065f511  push 0x2080                       
+0065f516  sub esp, 0xc                      
+0065f519  fstp dword ptr [esp + 8]          
+0065f51d  mov dword ptr [0xbcd17c], eax     
+0065f522  fldz                              
+0065f524  fstp dword ptr [esp + 4]          
+0065f528  fld dword ptr [0x9b5860]          
+0065f52e  fstp dword ptr [esp]              
+0065f531  push 0x9fda0c                      ;"player_breath_snd_lerp"
+0065f536  call 0x679020                     
+0065f53b  fld dword ptr [0x9b5860]          
+0065f541  add esp, 0x18                     
+0065f544  push 0x9dd354                     
+0065f549  push 0x2080                       
+0065f54e  sub esp, 0xc                      
+0065f551  fstp dword ptr [esp + 8]          
+0065f555  mov dword ptr [0xbcafa4], eax     
+0065f55a  fldz                              
+0065f55c  fstp dword ptr [esp + 4]          
+0065f560  fld1                              
+0065f562  fstp dword ptr [esp]              
+0065f565  push 0x9c9984                      ;"player_breath_snd_delay"
+0065f56a  call 0x679020                     
+0065f56f  add esp, 0x18                     
+0065f572  push 0x9dd354                     
+0065f577  mov dword ptr [0xbcd074], eax     
+0065f57c  push 0x80                         
+0065f581  fld dword ptr [0xa3ddd0]          
+0065f587  sub esp, 0xc                      
+0065f58a  fstp dword ptr [esp + 8]          
+0065f58e  fldz                              
+0065f590  fstp dword ptr [esp + 4]          
+0065f594  fld dword ptr [0xa28e7c]          
+0065f59a  fstp dword ptr [esp]              
+0065f59d  push 0x9d91e8                      ;"player_aqs_time"
+0065f5a2  call 0x679020                     
+0065f5a7  fld dword ptr [0x9b0fc4]          
+0065f5ad  add esp, 0x18                     
+0065f5b0  push 0x9dd354                     
+0065f5b5  push 0x80                         
+0065f5ba  sub esp, 0xc                      
+0065f5bd  fstp dword ptr [esp + 8]          
+0065f5c1  mov dword ptr [0xbcd128], eax     
+0065f5c6  fldz                              
+0065f5c8  fstp dword ptr [esp + 4]          
+0065f5cc  fld dword ptr [0xa4e388]          
+0065f5d2  fstp dword ptr [esp]              
+0065f5d5  push 0xa04e84                      ;"player_aqs_scale"
+0065f5da  call 0x679020                     
+0065f5df  fld dword ptr [0x9b56d0]          
+0065f5e5  add esp, 0x18                     
+0065f5e8  push 0x9dd354                     
+0065f5ed  push 0x80                         
+0065f5f2  sub esp, 0xc                      
+0065f5f5  fst dword ptr [esp + 8]           
+0065f5f9  mov dword ptr [0xbcaf2c], eax     
+0065f5fe  fldz                              
+0065f600  fstp dword ptr [esp + 4]          
+0065f604  fstp dword ptr [esp]              
+0065f607  push 0x9eb58c                      ;"player_aqs_spread_multiplier"
+0065f60c  call 0x679020                     
+0065f611  fld dword ptr [0x9b56d0]          
+0065f617  add esp, 0x18                     
+0065f61a  push 0x9dd354                     
+0065f61f  push 0x80                         
+0065f624  sub esp, 0xc                      
+0065f627  fst dword ptr [esp + 8]           
+0065f62b  mov dword ptr [0xbcd078], eax     
+0065f630  fldz                              
+0065f632  fstp dword ptr [esp + 4]          
+0065f636  fstp dword ptr [esp]              
+0065f639  push 0x9d32a8                      ;"player_aqs_spread_max"
+0065f63e  call 0x679020                     
+0065f643  fld dword ptr [0x9b56d0]          
+0065f649  add esp, 0x18                     
+0065f64c  push 0x9dd354                     
+0065f651  push 0x80                         
+0065f656  sub esp, 0xc                      
+0065f659  fstp dword ptr [esp + 8]          
+0065f65d  mov dword ptr [0xbcafb4], eax     
+0065f662  fldz                              
+0065f664  fstp dword ptr [esp + 4]          
+0065f668  fld dword ptr [0xa33860]          
+0065f66e  fstp dword ptr [esp]              
+0065f671  push 0xa39d54                      ;"player_aqs_sway_factor"
+0065f676  call 0x679020                     
+0065f67b  push 0x9dd354                     
+0065f680  push 0x2080                       
+0065f685  push 0                            
+0065f687  push 0x9a77e8                      ;"player_scopeExitOnDamage"
+0065f68c  mov dword ptr [0xbcaf40], eax     
+0065f691  call 0x45bb20                     
+0065f696  push 0x9dd354                     
+0065f69b  push 0x2080                       
+0065f6a0  push 0x3e8                        
+0065f6a5  push 0                            
+0065f6a7  push 0                            
+0065f6a9  push 0x9b04b4                      ;"player_adsExitDelay"
+0065f6ae  mov dword ptr [0xbcd0c8], eax     
+0065f6b3  call 0x651910                     
+0065f6b8  fld1                              
+0065f6ba  add esp, 0x40                     
+0065f6bd  push 0x9dd354                     
+0065f6c2  push 0x80                         
+0065f6c7  sub esp, 0xc                      
+0065f6ca  fstp dword ptr [esp + 8]          
+0065f6ce  mov dword ptr [0xbcaf68], eax     
+0065f6d3  fldz                              
+0065f6d5  fst dword ptr [esp + 4]           
+0065f6d9  fstp dword ptr [esp]              
+0065f6dc  push 0x9f566c                      ;"player_move_factor_on_torso"
+0065f6e1  call 0x679020                     
+0065f6e6  push 0x9dd354                     
+0065f6eb  push 0x2080                       
+0065f6f0  push 0                            
+0065f6f2  push 0x9d9bc0                      ;"player_debugHealth"
+0065f6f7  mov dword ptr [0xbcaf44], eax     
+0065f6fc  call 0x45bb20                     
+0065f701  push 0x9dd354                     
+0065f706  push 0x1080                       
+0065f70b  push 0                            
+0065f70d  push 0xa347a4                      ;"player_sustainAmmo"
+0065f712  mov dword ptr [0xbcae9c], eax     
+0065f717  call 0x45bb20                     
+0065f71c  fld dword ptr [0xa470f4]          
+0065f722  add esp, 0x38                     
+0065f725  push 0x9dd354                     
+0065f72a  push 0x80                         
+0065f72f  sub esp, 0xc                      
+0065f732  fstp dword ptr [esp + 8]          
+0065f736  mov dword ptr [0xbcd250], eax     
+0065f73b  fldz                              
+0065f73d  fstp dword ptr [esp + 4]          
+0065f741  fld1                              
+0065f743  fstp dword ptr [esp]              
+0065f746  push 0x9fb918                     
+0065f74b  call 0x679020                     
+0065f750  fld dword ptr [0xa470f4]          
+0065f756  add esp, 0x18                     
+0065f759  push 0x9dd354                     
+0065f75e  push 0x4080                       
+0065f763  sub esp, 0xc                      
+0065f766  fstp dword ptr [esp + 8]          
+0065f76a  mov dword ptr [0xbcaf84], eax     
+0065f76f  fldz                              
+0065f771  fstp dword ptr [esp + 4]          
+0065f775  fld dword ptr [0xa0746c]          
+0065f77b  fstp dword ptr [esp]              
+0065f77e  push 0x9d80ac                      ;"player_lastStandBleedoutTime"
+0065f783  call 0x679020                     
+0065f788  fld dword ptr [0xa470f4]          
+0065f78e  add esp, 0x18                     
+0065f791  push 0x9dd354                     
+0065f796  push 0x80                         
+0065f79b  sub esp, 0xc                      
+0065f79e  fstp dword ptr [esp + 8]          
+0065f7a2  mov dword ptr [0xbcd0d8], eax     
+0065f7a7  fldz                              
+0065f7a9  fstp dword ptr [esp + 4]          
+0065f7ad  fld dword ptr [0xa4e390]          
+0065f7b3  fstp dword ptr [esp]              
+0065f7b6  push 0x9aa2d0                      ;"player_lastStandBleedoutTimeNoRevive"
+0065f7bb  call 0x679020                     
+0065f7c0  fld dword ptr [0xa470f4]          
+0065f7c6  add esp, 0x18                     
+0065f7c9  push 0x9dd354                     
+0065f7ce  push 0x80                         
+0065f7d3  sub esp, 0xc                      
+0065f7d6  fstp dword ptr [esp + 8]          
+0065f7da  mov dword ptr [0xbcd050], eax     
+0065f7df  fldz                              
+0065f7e1  fstp dword ptr [esp + 4]          
+0065f7e5  fld dword ptr [0x9df578]          
+0065f7eb  fstp dword ptr [esp]              
+0065f7ee  push 0x9f7c38                      ;"revive_time_taken"
+0065f7f3  call 0x679020                     
+0065f7f8  fld dword ptr [0xa470f4]          
+0065f7fe  add esp, 0x18                     
+0065f801  push 0x9dd354                     
+0065f806  push 0x80                         
+0065f80b  sub esp, 0xc                      
+0065f80e  fstp dword ptr [esp + 8]          
+0065f812  mov dword ptr [0xbcaea8], eax     
+0065f817  fldz                              
+0065f819  fstp dword ptr [esp + 4]          
+0065f81d  fld dword ptr [0xa4e388]          
+0065f823  fstp dword ptr [esp]              
+0065f826  push 0x9e7580                      ;"player_lastStandHealthOverlayTime"
+0065f82b  call 0x679020                     
+0065f830  fld dword ptr [0xa4189c]          
+0065f836  add esp, 0x18                     
+0065f839  push 0x9dd354                     
+0065f83e  push 0x80                         
+0065f843  sub esp, 0xc                      
+0065f846  fstp dword ptr [esp + 8]          
+0065f84a  mov dword ptr [0xbcaecc], eax     
+0065f84f  fldz                              
+0065f851  fstp dword ptr [esp + 4]          
+0065f855  fld dword ptr [0xa3a504]          
+0065f85b  fstp dword ptr [esp]              
+0065f85e  push 0xa4b5e8                      ;"player_reviveTriggerRadius"
+0065f863  call 0x679020                     
+0065f868  fld dword ptr [0xa470f4]          
+0065f86e  add esp, 0x18                     
+0065f871  push 0x9dd354                     
+0065f876  push 0x80                         
+0065f87b  sub esp, 0xc                      
+0065f87e  fstp dword ptr [esp + 8]          
+0065f882  mov dword ptr [0xbcafc0], eax     
+0065f887  fldz                              
+0065f889  fstp dword ptr [esp + 4]          
+0065f88d  fld dword ptr [0x9b5860]          
+0065f893  fstp dword ptr [esp]              
+0065f896  push 0x9d1384                      ;"player_revivePlayerListCycleTime"
+0065f89b  call 0x679020                     
+0065f8a0  push 0x9dd354                     
+0065f8a5  push 0x180                        
+0065f8aa  push 0                            
+0065f8ac  push 0x9c0b38                      ;"bg_vsmode_hud"
+0065f8b1  mov dword ptr [0xbcd1cc], eax     
+0065f8b6  call 0x45bb20                     
+0065f8bb  push 0x9dd354                     
+0065f8c0  push 0x80                         
+0065f8c5  push 0                            
+0065f8c7  push 0xa19598                      ;"player_enableShuffleAnims"
+0065f8cc  mov dword ptr [0xbcd0c0], eax     
+0065f8d1  call 0x45bb20                     
+0065f8d6  fld dword ptr [0xa4bf50]          
+0065f8dc  add esp, 0x38                     
+0065f8df  push 0x9dd354                     
+0065f8e4  push 0x80                         
+0065f8e9  sub esp, 0xc                      
+0065f8ec  fstp dword ptr [esp + 8]          
+0065f8f0  mov dword ptr [0xbcd1c4], eax     
+0065f8f5  fldz                              
+0065f8f7  fstp dword ptr [esp + 4]          
+0065f8fb  fld dword ptr [0xa2e06c]          
+0065f901  fstp dword ptr [esp]              
+0065f904  push 0xa0ceac                      ;"player_animRunThreshhold"
+0065f909  call 0x679020                     
+0065f90e  fld dword ptr [0xa4bf50]          
+0065f914  add esp, 0x18                     
+0065f917  push 0x9dd354                     
+0065f91c  push 0x80                         
+0065f921  sub esp, 0xc                      
+0065f924  fstp dword ptr [esp + 8]          
+0065f928  mov dword ptr [0xbcd1f4], eax     
+0065f92d  fldz                              
+0065f92f  fstp dword ptr [esp + 4]          
+0065f933  fld dword ptr [0xa3ddd0]          
+0065f939  fstp dword ptr [esp]              
+0065f93c  push 0x9e6ab8                      ;"player_animWalkThreshhold"
+0065f941  call 0x679020                     
+0065f946  fld dword ptr [0xa4bf50]          
+0065f94c  add esp, 0x18                     
+0065f94f  push 0x9dd354                     
+0065f954  push 0x3080                       
+0065f959  sub esp, 0xc                      
+0065f95c  fstp dword ptr [esp + 8]          
+0065f960  mov dword ptr [0xbcd1c0], eax     
+0065f965  fldz                              
+0065f967  fstp dword ptr [esp + 4]          
+0065f96b  fld dword ptr [0xa4e3b8]          
+0065f971  fstp dword ptr [esp]              
+0065f974  push 0x9da3cc                      ;"player_runbkThreshhold"
+0065f979  call 0x679020                     
+0065f97e  add esp, 0x18                     
+0065f981  push 0x9dd354                     
+0065f986  mov dword ptr [0xbcaec0], eax     
+0065f98b  push 0x2080                       
+0065f990  fld dword ptr [0xa4e3b4]          
+0065f996  sub esp, 0xc                      
+0065f999  fstp dword ptr [esp + 8]          
+0065f99d  fld dword ptr [0xa0ef20]          
+0065f9a3  fstp dword ptr [esp + 4]          
+0065f9a7  fld dword ptr [0x9b5860]          
+0065f9ad  fstp dword ptr [esp]              
+0065f9b0  push 0xa031d0                      ;"player_moveThreshhold"
+0065f9b5  call 0x679020                     
+0065f9ba  fld dword ptr [0xa4bf50]          
+0065f9c0  add esp, 0x18                     
+0065f9c3  push 0x9dd354                     
+0065f9c8  push 0x2080                       
+0065f9cd  sub esp, 0xc                      
+0065f9d0  fstp dword ptr [esp + 8]          
+0065f9d4  mov dword ptr [0xbcd048], eax     
+0065f9d9  fldz                              
+0065f9db  fstp dword ptr [esp + 4]          
+0065f9df  fld dword ptr [0xa4e390]          
+0065f9e5  fstp dword ptr [esp]              
+0065f9e8  push 0xa0ae3c                      ;"player_footstepsThreshhold"
+0065f9ed  call 0x679020                     
+0065f9f2  fld dword ptr [0xa4bf50]          
+0065f9f8  add esp, 0x18                     
+0065f9fb  push 0x9dd354                     
+0065fa00  push 0x2080                       
+0065fa05  sub esp, 0xc                      
+0065fa08  fstp dword ptr [esp + 8]          
+0065fa0c  mov dword ptr [0xbcae90], eax     
+0065fa11  fldz                              
+0065fa13  fstp dword ptr [esp + 4]          
+0065fa17  fld dword ptr [0x9b77f4]          
+0065fa1d  fstp dword ptr [esp]              
+0065fa20  push 0xa1e1f4                      ;"player_runThreshhold"
+0065fa25  call 0x679020                     
+0065fa2a  fld dword ptr [0xa4bf50]          
+0065fa30  add esp, 0x18                     
+0065fa33  push 0x9dd354                     
+0065fa38  push 0x2080                       
+0065fa3d  sub esp, 0xc                      
+0065fa40  fstp dword ptr [esp + 8]          
+0065fa44  mov dword ptr [0xbcd088], eax     
+0065fa49  fldz                              
+0065fa4b  fstp dword ptr [esp + 4]          
+0065fa4f  fld dword ptr [0xa4e3b8]          
+0065fa55  fstp dword ptr [esp]              
+0065fa58  push 0xa46258                      ;"player_knockbackMoveThreshhold"
+0065fa5d  call 0x679020                     
+0065fa62  fld dword ptr [0xa4bf50]          
+0065fa68  add esp, 0x18                     
+0065fa6b  push 0x9dd354                     
+0065fa70  push 0x2080                       
+0065fa75  sub esp, 0xc                      
+0065fa78  fstp dword ptr [esp + 8]          
+0065fa7c  mov dword ptr [0xbcd09c], eax     
+0065fa81  fldz                              
+0065fa83  fstp dword ptr [esp + 4]          
+0065fa87  fld dword ptr [0xa2bbe4]          
+0065fa8d  fstp dword ptr [esp]              
+0065fa90  push 0x9aff00                      ;"player_sprintThreshhold"
+0065fa95  call 0x679020                     
+0065fa9a  fld dword ptr [0xa4e3b4]          
+0065faa0  add esp, 0x18                     
+0065faa3  push 0x9dd354                     
+0065faa8  push 0x5000                       
+0065faad  sub esp, 0xc                      
+0065fab0  fstp dword ptr [esp + 8]          
+0065fab4  mov dword ptr [0xbcafc8], eax     
+0065fab9  fldz                              
+0065fabb  fstp dword ptr [esp + 4]          
+0065fabf  fld dword ptr [0x9a8738]          
+0065fac5  fstp dword ptr [esp]              
+0065fac8  push 0xa162b0                      ;"player_waterSpeedScale"
+0065facd  call 0x679020                     
+0065fad2  fld dword ptr [0x9db5f0]          
+0065fad8  add esp, 0x18                     
+0065fadb  push 0x9dd354                     
+0065fae0  push 0                            
+0065fae2  sub esp, 0xc                      
+0065fae5  fstp dword ptr [esp + 8]          
+0065fae9  mov dword ptr [0xbcae94], eax     
+0065faee  fld dword ptr [0x9a8fe0]          
+0065faf4  fstp dword ptr [esp + 4]          
+0065faf8  fld dword ptr [0xa4e3b4]          
+0065fafe  fstp dword ptr [esp]              
+0065fb01  push 0x9fce30                      ;"player_floatSpeed"
+0065fb06  call 0x679020                     
+0065fb0b  push 0x9dd354                     
+0065fb10  push 0                            
+0065fb12  push 1                            
+0065fb14  push 0xa3a8dc                      ;"player_disableWeaponsInWater"
+0065fb19  mov dword ptr [0xbcaed4], eax     
+0065fb1e  call 0x45bb20                     
+0065fb23  fld dword ptr [0xa32ea4]          
+0065fb29  add esp, 0x28                     
+0065fb2c  push 0x9dd354                     
+0065fb31  push 0x4080                       
+0065fb36  sub esp, 0xc                      
+0065fb39  fstp dword ptr [esp + 8]          
+0065fb3d  mov dword ptr [0xbcd090], eax     
+0065fb42  fldz                              
+0065fb44  fstp dword ptr [esp + 4]          
+0065fb48  fld dword ptr [0xa13658]          
+0065fb4e  fstp dword ptr [esp]              
+0065fb51  push 0x9e8f18                      ;"player_sliding_friction"
+0065fb56  call 0x679020                     
+0065fb5b  fld dword ptr [0x9db5f0]          
+0065fb61  add esp, 0x18                     
+0065fb64  push 0x9dd354                     
+0065fb69  push 0x4080                       
+0065fb6e  sub esp, 0xc                      
+0065fb71  fstp dword ptr [esp + 8]          
+0065fb75  mov dword ptr [0xbcd1f8], eax     
+0065fb7a  fldz                              
+0065fb7c  fstp dword ptr [esp + 4]          
+0065fb80  fld dword ptr [0xa0e4fc]          
+0065fb86  fstp dword ptr [esp]              
+0065fb89  push 0x9d5850                      ;"player_sliding_wishspeed"
+0065fb8e  call 0x679020                     
+0065fb93  fld dword ptr [0x9db5f0]          
+0065fb99  add esp, 0x18                     
+0065fb9c  push 0x9dd354                     
+0065fba1  push 0x4080                       
+0065fba6  sub esp, 0xc                      
+0065fba9  fstp dword ptr [esp + 8]          
+0065fbad  mov dword ptr [0xbcaeac], eax     
+0065fbb2  fldz                              
+0065fbb4  fstp dword ptr [esp + 4]          
+0065fbb8  fld dword ptr [0xa4d620]          
+0065fbbe  fstp dword ptr [esp]              
+0065fbc1  push 0xa0b134                      ;"player_sliding_velocity_cap"
+0065fbc6  call 0x679020                     
+0065fbcb  fld dword ptr [0xa4e3b4]          
+0065fbd1  add esp, 0x18                     
+0065fbd4  push 0x9dd354                     
+0065fbd9  push 0x2080                       
+0065fbde  sub esp, 0xc                      
+0065fbe1  fstp dword ptr [esp + 8]          
+0065fbe5  mov dword ptr [0xbcd108], eax     
+0065fbea  fldz                              
+0065fbec  fstp dword ptr [esp + 4]          
+0065fbf0  fld dword ptr [0xa12aa0]          
+0065fbf6  fstp dword ptr [esp]              
+0065fbf9  push 0xa001ac                      ;"player_strafeSpeedScale"
+0065fbfe  call 0x679020                     
+0065fc03  fld dword ptr [0xa4e3b4]          
+0065fc09  add esp, 0x18                     
+0065fc0c  push 0x9dd354                     
+0065fc11  push 0x2080                       
+0065fc16  sub esp, 0xc                      
+0065fc19  fstp dword ptr [esp + 8]          
+0065fc1d  mov dword ptr [0xbcd1bc], eax     
+0065fc22  fldz                              
+0065fc24  fstp dword ptr [esp + 4]          
+0065fc28  fld dword ptr [0xa16838]           ;->"333?fx_priority_enable"
+0065fc2e  fstp dword ptr [esp]              
+0065fc31  push 0x9d5ba4                      ;"player_backSpeedScale"
+0065fc36  call 0x679020                     
+0065fc3b  add esp, 0x18                     
+0065fc3e  push 0x9dd354                     
+0065fc43  mov dword ptr [0xbcd0dc], eax     
+0065fc48  push 0x2080                       
+0065fc4d  fld1                              
+0065fc4f  sub esp, 0xc                      
+0065fc52  fstp dword ptr [esp + 8]          
+0065fc56  fldz                              
+0065fc58  fstp dword ptr [esp + 4]          
+0065fc5c  fld dword ptr [0x9b449c]          
+0065fc62  fstp dword ptr [esp]              
+0065fc65  push 0x9daa58                      ;"player_strafeAnimCosAngle"
+0065fc6a  call 0x679020                     
+0065fc6f  fld dword ptr [0xa28938]          
+0065fc75  add esp, 0x18                     
+0065fc78  push 0x9dd354                     
+0065fc7d  push 0x80                         
+0065fc82  sub esp, 0xc                      
+0065fc85  fstp dword ptr [esp + 8]          
+0065fc89  mov dword ptr [0xbcd044], eax     
+0065fc8e  fld dword ptr [0xa2bfdc]          
+0065fc94  fstp dword ptr [esp + 4]          
+0065fc98  fld dword ptr [0xa3ddd0]          
+0065fc9e  fstp dword ptr [esp]              
+0065fca1  push 0xa41fd0                     
+0065fca6  call 0x679020                     
+0065fcab  fld dword ptr [0xa4e3b4]          
+0065fcb1  add esp, 0x18                     
+0065fcb4  push 0x9dd354                     
+0065fcb9  push 0x2080                       
+0065fcbe  sub esp, 0xc                      
+0065fcc1  fstp dword ptr [esp + 8]          
+0065fcc5  mov dword ptr [0xbcd238], eax     
+0065fcca  fldz                              
+0065fccc  fstp dword ptr [esp + 4]          
+0065fcd0  fld1                              
+0065fcd2  fstp dword ptr [esp]              
+0065fcd5  push 0x9cd188                      ;"player_spectateSpeedScale"
+0065fcda  call 0x679020                     
+0065fcdf  fld dword ptr [0xa4e3b4]          
+0065fce5  add esp, 0x18                     
+0065fce8  push 0x9dd354                     
+0065fced  push 0x2080                       
+0065fcf2  sub esp, 0xc                      
+0065fcf5  fstp dword ptr [esp + 8]          
+0065fcf9  mov dword ptr [0xbcd0a0], eax     
+0065fcfe  fld1                              
+0065fd00  fstp dword ptr [esp + 4]          
+0065fd04  fld dword ptr [0x9e34ec]          
+0065fd0a  fstp dword ptr [esp]              
+0065fd0d  push 0x9aa5b4                      ;"player_enduranceSpeedScale"
+0065fd12  call 0x679020                     
+0065fd17  push 0x9dd354                     
+0065fd1c  push 0x2000                       
+0065fd21  push 0xff                         
+0065fd26  push 0                            
+0065fd28  push 0x69                         
+0065fd2a  push 0x9f0bc4                      ;"player_sprintForwardMinimum"
+0065fd2f  mov dword ptr [0xbcaee4], eax     
+0065fd34  call 0x651910                     
+0065fd39  fld dword ptr [0x9d2b50]          
+0065fd3f  add esp, 0x30                     
+0065fd42  push 0x9dd354                     
+0065fd47  push 0x2080                       
+0065fd4c  sub esp, 0xc                      
+0065fd4f  fstp dword ptr [esp + 8]          
+0065fd53  mov dword ptr [0xbcaec8], eax     
+0065fd58  fldz                              
+0065fd5a  fstp dword ptr [esp + 4]          
+0065fd5e  fld dword ptr [0xa13658]          
+0065fd64  fstp dword ptr [esp]              
+0065fd67  push 0x9e4078                      ;"player_sprintSpeedScale"
+0065fd6c  call 0x679020                     
+0065fd71  push 0x9dd354                     
+0065fd76  push 0x3000                       
+0065fd7b  push 0                            
+0065fd7d  push 0x9e7764                      ;"player_sprintUnlimited"
+0065fd82  mov dword ptr [0xbcd148], eax     
+0065fd87  call 0x45bb20                     
+0065fd8c  fld dword ptr [0xa37a14]          
+0065fd92  add esp, 0x28                     
+0065fd95  push 0x9dd354                     
+0065fd9a  push 0x2080                       
+0065fd9f  mov dword ptr [0xbcd154], eax     
+0065fda4  sub esp, 0xc                      
+0065fda7  fstp dword ptr [esp + 8]          
+0065fdab  fldz                              
+0065fdad  fstp dword ptr [esp + 4]          
+0065fdb1  fld dword ptr [0x9dad38]          
+0065fdb7  fstp dword ptr [esp]              
+0065fdba  push 0x9d5348                      ;"player_sprintTime"
+0065fdbf  call 0x679020                     
+0065fdc4  fld dword ptr [0xa37a14]          
+0065fdca  add esp, 0x18                     
+0065fdcd  push 0x9dd354                     
+0065fdd2  push 0x2080                       
+0065fdd7  sub esp, 0xc                      
+0065fdda  fstp dword ptr [esp + 8]          
+0065fdde  mov dword ptr [0xbcd19c], eax     
+0065fde3  fldz                              
+0065fde5  fstp dword ptr [esp + 4]          
+0065fde9  fld1                              
+0065fdeb  fstp dword ptr [esp]              
+0065fdee  push 0xa3e02c                      ;"player_sprintMinTime"
+0065fdf3  call 0x679020                     
+0065fdf8  fld dword ptr [0x9e7408]          
+0065fdfe  add esp, 0x18                     
+0065fe01  push 0x9dd354                     
+0065fe06  push 0x2080                       
+0065fe0b  sub esp, 0xc                      
+0065fe0e  fstp dword ptr [esp + 8]          
+0065fe12  mov dword ptr [0xbcd058], eax     
+0065fe17  fldz                              
+0065fe19  fst dword ptr [esp + 4]           
+0065fe1d  fstp dword ptr [esp]              
+0065fe20  push 0xa09b4c                      ;"player_sprintRechargePause"
+0065fe25  call 0x679020                     
+0065fe2a  fld dword ptr [0x9b5860]          
+0065fe30  add esp, 0x18                     
+0065fe33  push 0x9dd354                     
+0065fe38  push 0x2080                       
+0065fe3d  sub esp, 0xc                      
+0065fe40  fstp dword ptr [esp + 8]          
+0065fe44  mov dword ptr [0xbcd164], eax     
+0065fe49  fldz                              
+0065fe4b  fstp dword ptr [esp + 4]          
+0065fe4f  fld dword ptr [0xa16008]          
+0065fe55  fstp dword ptr [esp]              
+0065fe58  push 0xa30f18                      ;"player_sprintStrafeSpeedScale"
+0065fe5d  call 0x679020                     
+0065fe62  fld dword ptr [0x9b5860]          
+0065fe68  add esp, 0x18                     
+0065fe6b  push 0x9dd354                     
+0065fe70  push 0x2080                       
+0065fe75  sub esp, 0xc                      
+0065fe78  fstp dword ptr [esp + 8]          
+0065fe7c  mov dword ptr [0xbcd18c], eax     
+0065fe81  fldz                              
+0065fe83  fstp dword ptr [esp + 4]          
+0065fe87  fld dword ptr [0x9b449c]          
+0065fe8d  fstp dword ptr [esp]              
+0065fe90  push 0x9da91c                      ;"player_sprintCameraBob"
+0065fe95  call 0x679020                     
+0065fe9a  fld dword ptr [0xa32ea4]          
+0065fea0  add esp, 0x18                     
+0065fea3  push 0x9dd354                     
+0065fea8  push 0x4000                       
+0065fead  sub esp, 0xc                      
+0065feb0  fstp dword ptr [esp + 8]          
+0065feb4  mov dword ptr [0xbcd230], eax     
+0065feb9  fldz                              
+0065febb  fstp dword ptr [esp + 4]          
+0065febf  fld1                              
+0065fec1  fstp dword ptr [esp]              
+0065fec4  push 0x9b60d4                      ;"player_turnRateScale"
+0065fec9  call 0x679020                     
+0065fece  push 0x9dd354                     
+0065fed3  push 0x2080                       
+0065fed8  push 1                            
+0065feda  push 0x9bc754                      ;"player_turnAnims"
+0065fedf  mov dword ptr [0xbcd070], eax     
+0065fee4  call 0x45bb20                     
+0065fee9  push 0x9dd354                     
+0065feee  push 0x80                         
+0065fef3  mov dword ptr [0xbcaed0], eax     
+0065fef8  push 1                            
+0065fefa  push 0x9b5538                      ;"player_bayonetLaunchProof"
+0065feff  call 0x45bb20                     
+0065ff04  push 0x9dd354                     
+0065ff09  push 0x80                         
+0065ff0e  push 0                            
+0065ff10  push 0xa26c84                      ;"player_bayonetLaunchDebugging"
+0065ff15  mov dword ptr [0xbcafb8], eax     
+0065ff1a  call 0x45bb20                     
+0065ff1f  fld dword ptr [0xa4d620]          
+0065ff25  add esp, 0x48                     
+0065ff28  push 0x9dd354                     
+0065ff2d  push 0x80                         
+0065ff32  sub esp, 0xc                      
+0065ff35  fstp dword ptr [esp + 8]          
+0065ff39  mov dword ptr [0xbcaf94], eax     
+0065ff3e  fldz                              
+0065ff40  fstp dword ptr [esp + 4]          
+0065ff44  fld dword ptr [0x9f9bd8]          
+0065ff4a  fstp dword ptr [esp]              
+0065ff4d  push 0x9cad44                      ;"player_bayonetLaunchZCap"
+0065ff52  call 0x679020                     
+0065ff57  fld dword ptr [0xa470f4]          
+0065ff5d  add esp, 0x18                     
+0065ff60  push 0x9dd354                     
+0065ff65  push 0x180                        
+0065ff6a  sub esp, 0xc                      
+0065ff6d  fstp dword ptr [esp + 8]          
+0065ff71  mov dword ptr [0xbcd254], eax     
+0065ff76  fldz                              
+0065ff78  fstp dword ptr [esp + 4]          
+0065ff7c  fld dword ptr [0xa32ea4]          
+0065ff82  fstp dword ptr [esp]              
+0065ff85  push 0x9af218                      ;"player_dmgtimer_timePerPoint"
+0065ff8a  call 0x679020                     
+0065ff8f  fld dword ptr [0xa470f4]          
+0065ff95  add esp, 0x18                     
+0065ff98  push 0x9dd354                     
+0065ff9d  push 0x180                        
+0065ffa2  sub esp, 0xc                      
+0065ffa5  fstp dword ptr [esp + 8]          
+0065ffa9  mov dword ptr [0xbcd0a8], eax     
+0065ffae  fldz                              
+0065ffb0  fstp dword ptr [esp + 4]          
+0065ffb4  fld dword ptr [0x9fb078]          
+0065ffba  fstp dword ptr [esp]              
+0065ffbd  push 0xa21140                      ;"player_dmgtimer_maxTime"
+0065ffc2  call 0x679020                     
+0065ffc7  fld1                              
+0065ffc9  add esp, 0x18                     
+0065ffcc  push 0x9dd354                     
+0065ffd1  push 0x180                        
+0065ffd6  sub esp, 0xc                      
+0065ffd9  fstp dword ptr [esp + 8]          
+0065ffdd  mov dword ptr [0xbcd10c], eax     
+0065ffe2  fldz                              
+0065ffe4  fst dword ptr [esp + 4]           
+0065ffe8  fstp dword ptr [esp]              
+0065ffeb  push 0xa01178                      ;"player_dmgtimer_minScale"
+0065fff0  call 0x679020                     
+0065fff5  push 0x9dd354                     
+0065fffa  push 0x180                        
+0065ffff  push 0x7d0                        
+00660004  push 0                            
+00660006  push 0x1f4                        
+0066000b  push 0x9aeba0                      ;"player_dmgtimer_stumbleTime"
+00660010  mov dword ptr [0xbcd04c], eax     
+00660015  call 0x651910                     
+0066001a  push 0x9dd354                     
+0066001f  push 0x180                        
+00660024  push 0x7d0                        
+00660029  push 0                            
+0066002b  push 0x1f4                        
+00660030  push 0x9ee168                      ;"player_dmgtimer_flinchTime"
+00660035  mov dword ptr [0xbcd0cc], eax     
+0066003a  call 0x651910                     
+0066003f  add esp, 0x48                     
+00660042  push 0x9dd354                     
+00660047  push 0x80                         
+0066004c  push 0x9c381c                      ;"shellshock_loop"
+00660051  mov dword ptr [0xbcaf38], eax     
+00660056  push 0x9efb2c                      ;"bg_shock_soundLoop"
+0066005b  call 0x59b3b0                     
+00660060  push 0x9dd354                     
+00660065  push 0x80                         
+0066006a  push 0x9a7ba4                      ;"shellshock_loop_silent"
+0066006f  push 0x9eaaac                     
+00660074  mov dword ptr [0xbcd138], eax     
+00660079  call 0x59b3b0                     
+0066007e  push 0x9dd354                     
+00660083  push 0x80                         
+00660088  push 0x9e5d20                      ;"shellshock_end"
+0066008d  push 0x9af118                      ;"bg_shock_soundEnd"
+00660092  mov dword ptr [0xbcd06c], eax     
+00660097  call 0x59b3b0                     
+0066009c  push 0x9dd354                     
+006600a1  push 0x80                         
+006600a6  push 0x9f5a50                      ;"shellshock_end_abort"
+006600ab  push 0xa2a900                     
+006600b0  mov dword ptr [0xbcaeb4], eax     
+006600b5  call 0x59b3b0                     
+006600ba  add esp, 0x40                     
+006600bd  push 0x9dd354                     
+006600c2  push 0x80                         
+006600c7  push 0                            
+006600c9  push 0xb6cf48                     
+006600ce  push 0x9df4f4                      ;"bg_shock_screenType"
+006600d3  mov dword ptr [0xbcaef0], eax     
+006600d8  call 0x51bd00                     
+006600dd  fld dword ptr [0xa4e390]          
+006600e3  add esp, 0x14                     
+006600e6  push 0x9dd354                     
+006600eb  push 0x80                         
+006600f0  sub esp, 0xc                      
+006600f3  fstp dword ptr [esp + 8]          
+006600f7  mov dword ptr [0xbcafd0], eax     
+006600fc  fld dword ptr [0x9abd88]          
+00660102  fstp dword ptr [esp + 4]          
+00660106  fld dword ptr [0x9e28e4]          
+0066010c  fstp dword ptr [esp]              
+0066010f  push 0xa18ea4                     
+00660114  call 0x679020                     
+00660119  fld dword ptr [0x9f2500]          
+0066011f  add esp, 0x18                     
+00660122  push 0x9dd354                     
+00660127  push 0x80                         
+0066012c  sub esp, 0xc                      
+0066012f  fstp dword ptr [esp + 8]          
+00660133  mov dword ptr [0xbcaf24], eax     
+00660138  fld dword ptr [0x9abd88]          
+0066013e  fstp dword ptr [esp + 4]          
+00660142  fld1                              
+00660144  fstp dword ptr [esp]              
+00660147  push 0x9cde44                      ;"bg_shock_screenBlurBlendFadeTime"
+0066014c  call 0x679020                     
+00660151  fld dword ptr [0x9f2500]          
+00660157  add esp, 0x18                     
+0066015a  push 0x9dd354                     
+0066015f  push 0x80                         
+00660164  sub esp, 0xc                      
+00660167  fstp dword ptr [esp + 8]          
+0066016b  mov dword ptr [0xbcaf48], eax     
+00660170  fldz                              
+00660172  fst dword ptr [esp + 4]           
+00660176  fstp dword ptr [esp]              
+00660179  push 0x9f09fc                      ;"bg_shock_screenFlashWhiteFadeTime"
+0066017e  call 0x679020                     
+00660183  fld dword ptr [0x9f2500]          
+00660189  add esp, 0x18                     
+0066018c  push 0x9dd354                     
+00660191  push 0x80                         
+00660196  sub esp, 0xc                      
+00660199  fstp dword ptr [esp + 8]          
+0066019d  mov dword ptr [0xbcd12c], eax     
+006601a2  fldz                              
+006601a4  fst dword ptr [esp + 4]           
+006601a8  fstp dword ptr [esp]              
+006601ab  push 0x9ae6d0                      ;"bg_shock_screenFlashShotFadeTime"
+006601b0  call 0x679020                     
+006601b5  add esp, 0x18                     
+006601b8  push 0x9dd354                     
+006601bd  mov dword ptr [0xbcd1f0], eax     
+006601c2  push 0x80                         
+006601c7  fld dword ptr [0x9f2500]          
+006601cd  sub esp, 0xc                      
+006601d0  fstp dword ptr [esp + 8]          
+006601d4  fld dword ptr [0x9abd88]          
+006601da  fstp dword ptr [esp + 4]          
+006601de  fld dword ptr [0x9cf2f0]          
+006601e4  fstp dword ptr [esp]              
+006601e7  push 0xa483f4                      ;"bg_shock_viewKickPeriod"
+006601ec  call 0x679020                     
+006601f1  fld1                              
+006601f3  add esp, 0x18                     
+006601f6  push 0x9dd354                     
+006601fb  push 0x80                         
+00660200  sub esp, 0xc                      
+00660203  fstp dword ptr [esp + 8]          
+00660207  mov dword ptr [0xbcd13c], eax     
+0066020c  fldz                              
+0066020e  fstp dword ptr [esp + 4]          
+00660212  fld dword ptr [0x9efb40]          
+00660218  fstp dword ptr [esp]              
+0066021b  push 0xa29d94                      ;"bg_shock_viewKickRadius"
+00660220  call 0x679020                     
+00660225  fld dword ptr [0x9f2500]          
+0066022b  add esp, 0x18                     
+0066022e  push 0x9dd354                     
+00660233  push 0x80                         
+00660238  sub esp, 0xc                      
+0066023b  fstp dword ptr [esp + 8]          
+0066023f  mov dword ptr [0xbcd178], eax     
+00660244  fld dword ptr [0x9abd88]          
+0066024a  fstp dword ptr [esp + 4]          
+0066024e  fld dword ptr [0xa1c604]          
+00660254  fstp dword ptr [esp]              
+00660257  push 0x9dc3f0                      ;"bg_shock_viewKickFadeTime"
+0066025c  call 0x679020                     
+00660261  push 0x9dd354                     
+00660266  push 0x80                         
+0066026b  push 1                            
+0066026d  push 0xa0bf24                      ;"bg_shock_sound"
+00660272  mov dword ptr [0xbcd028], eax     
+00660277  call 0x45bb20                     
+0066027c  fld dword ptr [0x9f2500]          
+00660282  add esp, 0x28                     
+00660285  push 0x9dd354                     
+0066028a  push 0x80                         
+0066028f  sub esp, 0xc                      
+00660292  fstp dword ptr [esp + 8]          
+00660296  mov dword ptr [0xbcd158], eax     
+0066029b  fld dword ptr [0x9abd88]          
+006602a1  fstp dword ptr [esp + 4]          
+006602a5  fld dword ptr [0xa28e7c]          
+006602ab  fstp dword ptr [esp]              
+006602ae  push 0x9b3a80                      ;"bg_shock_soundFadeInTime"
+006602b3  call 0x679020                     
+006602b8  fld dword ptr [0x9f2500]          
+006602be  add esp, 0x18                     
+006602c1  push 0x9dd354                     
+006602c6  push 0x80                         
+006602cb  sub esp, 0xc                      
+006602ce  fstp dword ptr [esp + 8]          
+006602d2  mov dword ptr [0xbcd098], eax     
+006602d7  fldz                              
+006602d9  fstp dword ptr [esp + 4]          
+006602dd  fld dword ptr [0x9cb7ec]          
+006602e3  fstp dword ptr [esp]              
+006602e6  push 0x9d81c0                      ;"bg_shock_soundFadeOutTime"
+006602eb  call 0x679020                     
+006602f0  fld dword ptr [0x9f2500]          
+006602f6  add esp, 0x18                     
+006602f9  push 0x9dd354                     
+006602fe  push 0x80                         
+00660303  sub esp, 0xc                      
+00660306  fstp dword ptr [esp + 8]          
+0066030a  mov dword ptr [0xbcd0c4], eax     
+0066030f  fldz                              
+00660311  fstp dword ptr [esp + 4]          
+00660315  fld dword ptr [0xa13658]          
+0066031b  fstp dword ptr [esp]              
+0066031e  push 0x9f3330                      ;"bg_shock_soundLoopFadeTime"
+00660323  call 0x679020                     
+00660328  add esp, 0x18                     
+0066032b  fld dword ptr [0x9f2500]          
+00660331  push 0x9dd354                     
+00660336  push 0x80                         
+0066033b  sub esp, 0xc                      
+0066033e  fstp dword ptr [esp + 8]          
+00660342  mov dword ptr [0xbcafb0], eax     
+00660347  fld dword ptr [0xa2bfd4]          
+0066034d  fstp dword ptr [esp + 4]          
+00660351  fld dword ptr [0x9c322c]          
+00660357  fstp dword ptr [esp]              
+0066035a  push 0x9e9778                      ;"bg_shock_soundLoopEndDelay"
+0066035f  call 0x679020                     
+00660364  push 0x9dd354                     
+00660369  push 0x80                         
+0066036e  push 0xa2b25c                      ;"default"
+00660373  push 0xa05708                      ;"bg_shock_soundRoomType"
+00660378  mov dword ptr [0xbcd0a4], eax     
+0066037d  call 0x59b3b0                     
+00660382  fld1                              
+00660384  add esp, 0x28                     
+00660387  push 0x9dd354                     
+0066038c  push 0x80                         
+00660391  sub esp, 0xc                      
+00660394  fst dword ptr [esp + 8]           
+00660398  mov dword ptr [0xbcd1d0], eax     
+0066039d  fldz                              
+0066039f  fstp dword ptr [esp + 4]          
+006603a3  fstp dword ptr [esp]              
+006603a6  push 0x9e82d8                      ;"bg_shock_soundDryLevel"
+006603ab  call 0x679020                     
+006603b0  fld1                              
+006603b2  add esp, 0x18                     
+006603b5  push 0x9dd354                     
+006603ba  push 0x80                         
+006603bf  sub esp, 0xc                      
+006603c2  fstp dword ptr [esp + 8]          
+006603c6  mov dword ptr [0xbcaf6c], eax     
+006603cb  fldz                              
+006603cd  fstp dword ptr [esp + 4]          
+006603d1  fld dword ptr [0x9b449c]          
+006603d7  fstp dword ptr [esp]              
+006603da  push 0x9b30a4                      ;"bg_shock_soundWetLevel"
+006603df  call 0x679020                     
+006603e4  fld dword ptr [0x9f2500]          
+006603ea  add esp, 0x18                     
+006603ed  push 0x9dd354                     
+006603f2  push 0x80                         
+006603f7  sub esp, 0xc                      
+006603fa  fstp dword ptr [esp + 8]          
+006603fe  mov dword ptr [0xbcd100], eax     
+00660403  fld dword ptr [0xa27274]          
+00660409  fstp dword ptr [esp + 4]          
+0066040d  fld dword ptr [0x9b5860]          
+00660413  fstp dword ptr [esp]              
+00660416  push 0x9bfb38                      ;"bg_shock_soundModEndDelay"
+0066041b  call 0x679020                     
+00660420  push 0x9dd354                     
+00660425  push 0x80                         
+0066042a  push 0xa2b25c                      ;"default"
+0066042f  push 0xa231e0                      ;"bg_shock_soundSnapshot"
+00660434  mov dword ptr [0xbcd1fc], eax     
+00660439  call 0x59b3b0                     
+0066043e  push 0x9dd354                     
+00660443  push 0x80                         
+00660448  push 1                            
+0066044a  push 0xa38984                      ;"bg_shock_lookControl"
+0066044f  mov dword ptr [0xbcd1a8], eax     
+00660454  call 0x45bb20                     
+00660459  fld dword ptr [0xa470f4]          
+0066045f  add esp, 0x38                     
+00660462  push 0x9dd354                     
+00660467  push 0x80                         
+0066046c  sub esp, 0xc                      
+0066046f  fstp dword ptr [esp + 8]          
+00660473  mov dword ptr [0xbcaf8c], eax     
+00660478  fldz                              
+0066047a  fstp dword ptr [esp + 4]          
+0066047e  fld dword ptr [0xa13a24]          
+00660484  fstp dword ptr [esp]              
+00660487  push 0x9bbd54                      ;"bg_shock_lookControl_maxpitchspeed"
+0066048c  call 0x679020                     
+00660491  fld dword ptr [0xa470f4]          
+00660497  add esp, 0x18                     
+0066049a  push 0x9dd354                     
+0066049f  push 0x80                         
+006604a4  sub esp, 0xc                      
+006604a7  fstp dword ptr [esp + 8]          
+006604ab  mov dword ptr [0xbcd174], eax     
+006604b0  fldz                              
+006604b2  fstp dword ptr [esp + 4]          
+006604b6  fld dword ptr [0xa13a24]          
+006604bc  fstp dword ptr [esp]              
+006604bf  push 0xa4ab98                      ;"bg_shock_lookControl_maxyawspeed"
+006604c4  call 0x679020                     
+006604c9  fld dword ptr [0x9b5860]          
+006604cf  add esp, 0x18                     
+006604d2  push 0x9dd354                     
+006604d7  push 0x80                         
+006604dc  sub esp, 0xc                      
+006604df  fstp dword ptr [esp + 8]          
+006604e3  mov dword ptr [0xbcd0d4], eax     
+006604e8  fldz                              
+006604ea  fstp dword ptr [esp + 4]          
+006604ee  fld dword ptr [0x9b449c]          
+006604f4  fstp dword ptr [esp]              
+006604f7  push 0x9cff6c                      ;"bg_shock_lookControl_mousesensitivityscale"
+006604fc  call 0x679020                     
+00660501  fld dword ptr [0x9f2500]          
+00660507  add esp, 0x18                     
+0066050a  push 0x9dd354                     
+0066050f  push 0x80                         
+00660514  sub esp, 0xc                      
+00660517  fstp dword ptr [esp + 8]          
+0066051b  mov dword ptr [0xbcaea0], eax     
+00660520  fld dword ptr [0x9abd88]          
+00660526  fstp dword ptr [esp + 4]          
+0066052a  fld dword ptr [0x9b5860]          
+00660530  fstp dword ptr [esp]              
+00660533  push 0xa05e28                      ;"bg_shock_lookControl_fadeTime"
+00660538  call 0x679020                     
+0066053d  fld1                              
+0066053f  add esp, 0x18                     
+00660542  push 0x9dd354                     
+00660547  push 0x80                         
+0066054c  sub esp, 0xc                      
+0066054f  fst dword ptr [esp + 8]           
+00660553  mov dword ptr [0xbcd02c], eax     
+00660558  fldz                              
+0066055a  fstp dword ptr [esp + 4]          
+0066055e  fstp dword ptr [esp]              
+00660561  push 0xa442e8                      ;"bg_shock_movement"
+00660566  call 0x679020                     
+0066056b  push 0x9dd354                     
+00660570  push 0x80                         
+00660575  push 0                            
+00660577  push 0x9ff84c                      ;"bg_shock_animation"
+0066057c  mov dword ptr [0xbcaf80], eax     
+00660581  call 0x45bb20                     
+00660586  push 0x9dd354                     
+0066058b  push 0x80                         
+00660590  push 0x9dd354                     
+00660595  push 0x9ff91c                      ;"bg_shock_visionset_name"
+0066059a  mov dword ptr [0xbcaf70], eax     
+0066059f  call 0x59b3b0                     
+006605a4  fld dword ptr [0xa3ddd0]          
+006605aa  add esp, 0x38                     
+006605ad  push 0x9dd354                     
+006605b2  push 0x80                         
+006605b7  sub esp, 0xc                      
+006605ba  fstp dword ptr [esp + 8]          
+006605be  mov dword ptr [0xbcaf98], eax     
+006605c3  fldz                              
+006605c5  fst dword ptr [esp + 4]           
+006605c9  fstp dword ptr [esp]              
+006605cc  push 0x9e5240                      ;"bg_shock_visionset_inTime"
+006605d1  call 0x679020                     
+006605d6  fld dword ptr [0xa3ddd0]          
+006605dc  add esp, 0x18                     
+006605df  push 0x9dd354                     
+006605e4  push 0x80                         
+006605e9  mov dword ptr [0xbcafd8], eax     
+006605ee  sub esp, 0xc                      
+006605f1  fstp dword ptr [esp + 8]          
+006605f5  fldz                              
+006605f7  fst dword ptr [esp + 4]           
+006605fb  fstp dword ptr [esp]              
+006605fe  push 0x9dcf34                      ;"bg_shock_visionset_outTime"
+00660603  call 0x679020                     
+00660608  fld dword ptr [0x9f2500]          
+0066060e  add esp, 0x18                     
+00660611  push 0x9dd354                     
+00660616  push 0x80                         
+0066061b  sub esp, 0xc                      
+0066061e  fstp dword ptr [esp + 8]          
+00660622  mov dword ptr [0xbcd054], eax     
+00660627  fldz                              
+00660629  fstp dword ptr [esp + 4]          
+0066062d  fld dword ptr [0xa3a504]          
+00660633  fstp dword ptr [esp]              
+00660636  push 0x9beb6c                      ;"player_meleeRange"
+0066063b  call 0x679020                     
+00660640  fld dword ptr [0x9f2500]          
+00660646  add esp, 0x18                     
+00660649  push 0x9dd354                     
+0066064e  push 0x80                         
+00660653  sub esp, 0xc                      
+00660656  fstp dword ptr [esp + 8]          
+0066065a  mov dword ptr [0xbcafe4], eax     
+0066065f  fldz                              
+00660661  fstp dword ptr [esp + 4]          
+00660665  fld dword ptr [0xa4e390]          
+0066066b  fstp dword ptr [esp]              
+0066066e  push 0x9f98a0                      ;"player_meleeWidth"
+00660673  call 0x679020                     
+00660678  fld dword ptr [0x9f2500]          
+0066067e  add esp, 0x18                     
+00660681  push 0x9dd354                     
+00660686  push 0x80                         
+0066068b  sub esp, 0xc                      
+0066068e  fstp dword ptr [esp + 8]          
+00660692  mov dword ptr [0xbcd15c], eax     
+00660697  fldz                              
+00660699  fstp dword ptr [esp + 4]          
+0066069d  fld dword ptr [0xa4e390]          
+006606a3  fstp dword ptr [esp]              
+006606a6  push 0x9faa94                     
+006606ab  call 0x679020                     
+006606b0  fld dword ptr [0x9f2500]          
+006606b6  add esp, 0x18                     
+006606b9  push 0x9dd354                     
+006606be  push 0x80                         
+006606c3  sub esp, 0xc                      
+006606c6  fstp dword ptr [esp + 8]          
+006606ca  mov dword ptr [0xbcaf10], eax     
+006606cf  fldz                              
+006606d1  fstp dword ptr [esp + 4]          
+006606d5  fld dword ptr [0xa0aaa0]          
+006606db  fstp dword ptr [esp]              
+006606de  push 0xa00798                      ;"player_bayonetRange"
+006606e3  call 0x679020                     
+006606e8  push 0x9dd354                     
+006606ed  push 0x80                         
+006606f2  push 0x3e8                        
+006606f7  push 0                            
+006606f9  push 0x41                         
+006606fb  push 0x9c016c                      ;"player_bayonetTargetDist"
+00660700  mov dword ptr [0xbcd170], eax     
+00660705  call 0x651910                     
+0066070a  fld dword ptr [0xa4e3b8]          
+00660710  add esp, 0x30                     
+00660713  push 0x9dd354                     
+00660718  push 0x80                         
+0066071d  sub esp, 0xc                      
+00660720  fstp dword ptr [esp + 8]          
+00660724  mov dword ptr [0xbcd068], eax     
+00660729  fldz                              
+0066072b  fstp dword ptr [esp + 4]          
+0066072f  fld dword ptr [0x9f1e54]          
+00660735  fstp dword ptr [esp]              
+00660738  push 0x9ec244                      ;"player_burstFireCooldown"
+0066073d  call 0x679020                     
+00660742  add esp, 0x18                     
+00660745  mov dword ptr [0xbcd110], eax     
+0066074a  fld dword ptr [0xa470f4]          
+00660750  push 0x9dd354                     
+00660755  push 0x2080                       
+0066075a  sub esp, 0xc                      
+0066075d  fstp dword ptr [esp + 8]          
+00660761  fld1                              
+00660763  fstp dword ptr [esp + 4]          
+00660767  fld dword ptr [0x9db5a4]          
+0066076d  fstp dword ptr [esp]              
+00660770  push 0x9ee674                      ;"bg_gravity"
+00660775  call 0x679020                     
+0066077a  fld dword ptr [0xa470f4]          
+00660780  add esp, 0x18                     
+00660783  push 0x9dd354                     
+00660788  push 0x2080                       
+0066078d  sub esp, 0xc                      
+00660790  fstp dword ptr [esp + 8]          
+00660794  mov dword ptr [0xbcaefc], eax     
+00660799  fld1                              
+0066079b  fstp dword ptr [esp + 4]          
+0066079f  fld dword ptr [0x9e6098]          
+006607a5  fstp dword ptr [esp]              
+006607a8  push 0x9c0b7c                      ;"bg_lowGravity"
+006607ad  call 0x679020                     
+006607b2  fld dword ptr [0xa470f4]          
+006607b8  add esp, 0x18                     
+006607bb  push 0x9dd354                     
+006607c0  push 0x2000                       
+006607c5  sub esp, 0xc                      
+006607c8  fstp dword ptr [esp + 8]          
+006607cc  mov dword ptr [0xbcd14c], eax     
+006607d1  fld1                              
+006607d3  fstp dword ptr [esp + 4]          
+006607d7  fld dword ptr [0x9d83c4]          
+006607dd  fstp dword ptr [esp]              
+006607e0  push 0x9dca50                      ;"bg_moonGravity"
+006607e5  call 0x679020                     
+006607ea  fld dword ptr [0x9f6028]          
+006607f0  add esp, 0x18                     
+006607f3  push 0x9dd354                     
+006607f8  push 0x4080                       
+006607fd  sub esp, 0xc                      
+00660800  fstp dword ptr [esp + 8]          
+00660804  mov dword ptr [0xbcd0b8], eax     
+00660809  fldz                              
+0066080b  fstp dword ptr [esp + 4]          
+0066080f  fld dword ptr [0xa558e4]          
+00660815  fstp dword ptr [esp]              
+00660818  push 0xa3e760                      ;"player_swimTime"
+0066081d  call 0x679020                     
+00660822  push 0x9dd354                     
+00660827  push 0x4080                       
+0066082c  push 0x1388                       
+00660831  push 0                            
+00660833  push 0xf                          
+00660835  push 0xa27894                      ;"player_swimDamage"
+0066083a  mov dword ptr [0xbcaee8], eax     
+0066083f  call 0x651910                     
+00660844  fld dword ptr [0x9f6028]          
+0066084a  add esp, 0x30                     
+0066084d  push 0x9dd354                     
+00660852  push 0x4080                       
+00660857  sub esp, 0xc                      
+0066085a  fstp dword ptr [esp + 8]          
+0066085e  mov dword ptr [0xbcd064], eax     
+00660863  fldz                              
+00660865  fstp dword ptr [esp + 4]          
+00660869  fld1                              
+0066086b  fstp dword ptr [esp]              
+0066086e  push 0xa38308                      ;"player_swimDamagerInterval"
+00660873  call 0x679020                     
+00660878  push 0x9dd354                     
+0066087d  push 0x1000                       
+00660882  push 0x400                        
+00660887  push 0                            
+00660889  push 0                            
+0066088b  push 0x9f9de8                      ;"player_viewLockEnt"
+00660890  mov dword ptr [0xbcd120], eax     
+00660895  call 0x651910                     
+0066089a  add esp, 0x30                     
+0066089d  mov dword ptr [0xbcd1b8], eax     
+006608a2  fld dword ptr [0xa32ea4]          
+006608a8  push 0x9dd354                     
+006608ad  push 0x1000                       
+006608b2  sub esp, 0xc                      
+006608b5  fstp dword ptr [esp + 8]          
+006608b9  fldz                              
+006608bb  fst dword ptr [esp + 4]           
+006608bf  fstp dword ptr [esp]              
+006608c2  push 0x9fb580                      ;"player_viewRateScale"
+006608c7  call 0x679020                     
+006608cc  push 0x9dd354                     
+006608d1  push 0x1000                       
+006608d6  push 4                            
+006608d8  push 0                            
+006608da  push 0                            
+006608dc  push 0xa16658                     
+006608e1  mov dword ptr [0xbcd030], eax     
+006608e6  call 0x651910                     
+006608eb  fld dword ptr [0x9d045c]          
+006608f1  add esp, 0x30                     
+006608f4  push 0x9dd354                     
+006608f9  push 0x1000                       
+006608fe  sub esp, 0x14                     
+00660901  fstp dword ptr [esp + 0x10]       
+00660905  mov dword ptr [0xbcd150], eax     
+0066090a  fld dword ptr [0xa20ffc]          
+00660910  fstp dword ptr [esp + 0xc]        
+00660914  fld dword ptr [0xa4d620]          
+0066091a  fstp dword ptr [esp + 8]          
+0066091e  fldz                              
+00660920  fst dword ptr [esp + 4]           
+00660924  fstp dword ptr [esp]              
+00660927  push 0xa204ac                      ;"player_topDownCamOffset"
+0066092c  call 0x601fa0                     
+00660931  fld dword ptr [0x9defb4]          
+00660937  add esp, 0x20                     
+0066093a  push 0x9dd354                     
+0066093f  push 0x1000                       
+00660944  sub esp, 0x14                     
+00660947  fstp dword ptr [esp + 0x10]       
+0066094b  mov dword ptr [0xbcaf64], eax     
+00660950  fld dword ptr [0xa1d44c]          
+00660956  fstp dword ptr [esp + 0xc]        
+0066095a  fldz                              
+0066095c  fst dword ptr [esp + 8]           
+00660960  fstp dword ptr [esp + 4]          
+00660964  fld dword ptr [0xa0e7e0]          
+0066096a  fstp dword ptr [esp]              
+0066096d  push 0xa34968                      ;"player_topDownCamAngles"
+00660972  call 0x601fa0                     
+00660977  fld dword ptr [0x9f374c]          
+0066097d  add esp, 0x20                     
+00660980  push 0x9dd354                     
+00660985  push 0x1000                       
+0066098a  sub esp, 0x14                     
+0066098d  fstp dword ptr [esp + 0x10]       
+00660991  mov dword ptr [0xbcd0b4], eax     
+00660996  fld dword ptr [0xa1f4fc]          
+0066099c  fstp dword ptr [esp + 0xc]        
+006609a0  fld dword ptr [0xa12444]          
+006609a6  fstp dword ptr [esp + 8]          
+006609aa  fld dword ptr [0x9ed418]          
+006609b0  fstp dword ptr [esp + 4]          
+006609b4  fld dword ptr [0xa01c64]          
+006609ba  fstp dword ptr [esp]              
+006609bd  push 0x9f866c                      ;"player_topDownCamCenterPos"
+006609c2  call 0x601fa0                     
+006609c7  fld dword ptr [0xa470f4]          
+006609cd  add esp, 0x20                     
+006609d0  push 0x9dd354                     
+006609d5  push 0x1000                       
+006609da  sub esp, 0xc                      
+006609dd  fstp dword ptr [esp + 8]          
+006609e1  mov dword ptr [0xbcaeb8], eax     
+006609e6  fld1                              
+006609e8  fstp dword ptr [esp + 4]          
+006609ec  fld dword ptr [0x9d5068]          
+006609f2  fstp dword ptr [esp]              
+006609f5  push 0xa36f10                      ;"player_topDownCursorDist"
+006609fa  call 0x679020                     
+006609ff  add esp, 0x18                     
+00660a02  fld dword ptr [0xa470f4]          
+00660a08  push 0x9dd354                     
+00660a0d  push 0x1000                       
+00660a12  sub esp, 0x10                     
+00660a15  fstp dword ptr [esp + 0xc]        
+00660a19  mov dword ptr [0xbcd08c], eax     
+00660a1e  fld dword ptr [0xa12be8]          
+00660a24  fstp dword ptr [esp + 8]          
+00660a28  fldz                              
+00660a2a  fst dword ptr [esp + 4]           
+00660a2e  fstp dword ptr [esp]              
+00660a31  push 0xa1bb5c                      ;"player_topDownCursorPos"
+00660a36  call 0x4372d0                     
+00660a3b  push 0x9dd354                     
+00660a40  push 0x1000                       
+00660a45  push 0                            
+00660a47  push 0x9bee3c                      ;"player_forceRedCrosshair"
+00660a4c  mov dword ptr [0xbcd248], eax     
+00660a51  call 0x45bb20                     
+00660a56  fld dword ptr [0x9e5568]          
+00660a5c  add esp, 0x2c                     
+00660a5f  push 0x9dd354                     
+00660a64  push 0x80                         
+00660a69  sub esp, 0xc                      
+00660a6c  fstp dword ptr [esp + 8]          
+00660a70  mov dword ptr [0xbcd0ac], eax     
+00660a75  fldz                              
+00660a77  fstp dword ptr [esp + 4]          
+00660a7b  fld dword ptr [0xa3ddd0]          
+00660a81  fstp dword ptr [esp]              
+00660a84  push 0x9a4f4c                      ;"bullet_penetrationMinFxDist"
+00660a89  call 0x679020                     
+00660a8e  push 0x9dd354                     
+00660a93  push 0x1000                       
+00660a98  push 1                            
+00660a9a  push 0xa37044                      ;"cg_cinematicFullscreen"
+00660a9f  mov dword ptr [0xbcaf00], eax     
+00660aa4  call 0x45bb20                     
+00660aa9  push 0x9dd354                     
+00660aae  push 0x80                         
+00660ab3  push 3                            
+00660ab5  push 0                            
+00660ab7  push 0                            
+00660ab9  push 0x9af4d0                      ;"cg_debugMounting"
+00660abe  mov dword ptr [0xc20838], eax     
+00660ac3  call 0x651910                     
+00660ac8  fld1                              
+00660aca  add esp, 0x40                     
+00660acd  push 0x9dd354                     
+00660ad2  push 0                            
+00660ad4  sub esp, 0x14                     
+00660ad7  fstp dword ptr [esp + 0x10]       
+00660adb  mov dword ptr [0xbcafdc], eax     
+00660ae0  fld dword ptr [0xa3ad44]          
+00660ae6  fstp dword ptr [esp + 0xc]        
+00660aea  fld dword ptr [0x9b449c]          
+00660af0  fstp dword ptr [esp + 8]          
+00660af4  fld dword ptr [0x9e9f14]          
+00660afa  fstp dword ptr [esp + 4]          
+00660afe  fldz                              
+00660b00  fstp dword ptr [esp]              
+00660b03  push 0x9a61d0                      ;"player_AimBlend_Back_Low"
+00660b08  call 0x601fa0                     
+00660b0d  fld1                              
+00660b0f  add esp, 0x20                     
+00660b12  push 0x9dd354                     
+00660b17  push 0                            
+00660b19  sub esp, 0x14                     
+00660b1c  fstp dword ptr [esp + 0x10]       
+00660b20  mov dword ptr [0xbcaf9c], eax     
+00660b25  fld dword ptr [0xa3ad44]          
+00660b2b  fstp dword ptr [esp + 0xc]        
+00660b2f  fld dword ptr [0x9b449c]          
+00660b35  fstp dword ptr [esp + 8]          
+00660b39  fld dword ptr [0x9f1e54]          
+00660b3f  fstp dword ptr [esp + 4]          
+00660b43  fld dword ptr [0xa2a2f8]          
+00660b49  fstp dword ptr [esp]              
+00660b4c  push 0x9ebd8c                      ;"player_AimBlend_Back_Mid"
+00660b51  call 0x601fa0                     
+00660b56  add esp, 0x20                     
+00660b59  fld1                              
+00660b5b  push 0x9dd354                     
+00660b60  push 0                            
+00660b62  sub esp, 0x14                     
+00660b65  fstp dword ptr [esp + 0x10]       
+00660b69  mov dword ptr [0xbcd188], eax     
+00660b6e  fld dword ptr [0xa3ad44]          
+00660b74  fstp dword ptr [esp + 0xc]        
+00660b78  fld dword ptr [0xa2cf18]          
+00660b7e  fstp dword ptr [esp + 8]          
+00660b82  fld dword ptr [0xa2a2f8]          
+00660b88  fstp dword ptr [esp + 4]          
+00660b8c  fld dword ptr [0x9b449c]          
+00660b92  fstp dword ptr [esp]              
+00660b95  push 0xa29dac                      ;"player_AimBlend_Back_Up"
+00660b9a  call 0x601fa0                     
+00660b9f  fld1                              
+00660ba1  add esp, 0x20                     
+00660ba4  push 0x9dd354                     
+00660ba9  push 0                            
+00660bab  sub esp, 0x14                     
+00660bae  fstp dword ptr [esp + 0x10]       
+00660bb2  mov dword ptr [0xbcd190], eax     
+00660bb7  fld dword ptr [0xa3ad44]          
+00660bbd  fstp dword ptr [esp + 0xc]        
+00660bc1  fldz                              
+00660bc3  fstp dword ptr [esp + 8]          
+00660bc7  fld dword ptr [0x9e28e4]          
+00660bcd  fst dword ptr [esp + 4]           
+00660bd1  fstp dword ptr [esp]              
+00660bd4  push 0xa04df0                      ;"player_AimBlend_Pelvis"
+00660bd9  call 0x601fa0                     
+00660bde  fld1                              
+00660be0  add esp, 0x20                     
+00660be3  push 0x9dd354                     
+00660be8  push 0                            
+00660bea  sub esp, 0x14                     
+00660bed  fstp dword ptr [esp + 0x10]       
+00660bf1  mov dword ptr [0xbcaf28], eax     
+00660bf6  fld dword ptr [0xa3ad44]          
+00660bfc  fstp dword ptr [esp + 0xc]        
+00660c00  fldz                              
+00660c02  fstp dword ptr [esp + 8]          
+00660c06  fld dword ptr [0x9e9f14]          
+00660c0c  fst dword ptr [esp + 4]           
+00660c10  fstp dword ptr [esp]              
+00660c13  push 0x9dd920                      ;"player_AimBlend_Neck"
+00660c18  call 0x601fa0                     
+00660c1d  fld1                              
+00660c1f  add esp, 0x20                     
+00660c22  push 0x9dd354                     
+00660c27  push 0                            
+00660c29  sub esp, 0x14                     
+00660c2c  fstp dword ptr [esp + 0x10]       
+00660c30  mov dword ptr [0xbcd1ec], eax     
+00660c35  fld dword ptr [0xa3ad44]          
+00660c3b  fstp dword ptr [esp + 0xc]        
+00660c3f  fldz                              
+00660c41  fst dword ptr [esp + 8]           
+00660c45  fst dword ptr [esp + 4]           
+00660c49  fstp dword ptr [esp]              
+00660c4c  push 0xa0b758                      ;"player_AimBlend_Head"
+00660c51  call 0x601fa0                     
+00660c56  fld1                              
+00660c58  add esp, 0x20                     
+00660c5b  push 0x9dd354                     
+00660c60  push 0                            
+00660c62  sub esp, 0x14                     
+00660c65  fst dword ptr [esp + 0x10]        
+00660c69  mov dword ptr [0xbcd240], eax     
+00660c6e  fld dword ptr [0xa3ad44]          
+00660c74  fstp dword ptr [esp + 0xc]        
+00660c78  fst dword ptr [esp + 8]           
+00660c7c  fst dword ptr [esp + 4]           
+00660c80  fstp dword ptr [esp]              
+00660c83  push 0x9c4c9c                      ;"player_AimBlend_Shoulder"
+00660c88  call 0x601fa0                     
+00660c8d  push 0x9dd354                     
+00660c92  push 0x1000                       
+00660c97  mov dword ptr [0xbcd130], eax     
+00660c9c  push 0x2710                       
+00660ca1  push 1                            
+00660ca3  push 0x96                         
+00660ca8  push 0x9a6694                     
+00660cad  call 0x651910                     
+00660cb2  fld dword ptr [0x9ebe34]          
+00660cb8  add esp, 0x38                     
+00660cbb  push 0x9dd354                     
+00660cc0  push 0x80                         
+00660cc5  sub esp, 0xc                      
+00660cc8  fstp dword ptr [esp + 8]          
+00660ccc  mov dword ptr [0xbcd200], eax     
+00660cd1  fldz                              
+00660cd3  fstp dword ptr [esp + 4]          
+00660cd7  fld dword ptr [0xa498ac]          
+00660cdd  fstp dword ptr [esp]              
+00660ce0  push 0xa0d17c                      ;"dog_turn90_angle"
+00660ce5  call 0x679020                     
+00660cea  fld dword ptr [0x9ebe34]          
+00660cf0  add esp, 0x18                     
+00660cf3  push 0x9dd354                     
+00660cf8  push 0x80                         
+00660cfd  sub esp, 0xc                      
+00660d00  fstp dword ptr [esp + 8]          
+00660d04  mov dword ptr [0xbcd034], eax     
+00660d09  fldz                              
+00660d0b  fstp dword ptr [esp + 4]          
+00660d0f  fld dword ptr [0x9c98f8]          
+00660d15  fstp dword ptr [esp]              
+00660d18  push 0x9ac9f0                      ;"dog_turn180_angle"
+00660d1d  call 0x679020                     
+00660d22  fld dword ptr [0x9e5568]          
+00660d28  add esp, 0x18                     
+00660d2b  push 0x9dd354                     
+00660d30  push 0x80                         
+00660d35  sub esp, 0xc                      
+00660d38  fstp dword ptr [esp + 8]          
+00660d3c  mov dword ptr [0xbcafa0], eax     
+00660d41  fldz                              
+00660d43  fstp dword ptr [esp + 4]          
+00660d47  fld dword ptr [0xa33860]          
+00660d4d  fstp dword ptr [esp]              
+00660d50  push 0x9b232c                      ;"dog_turn_min_goal_dist"
+00660d55  call 0x679020                     
+00660d5a  push 0x9dd354                     
+00660d5f  push 0                            
+00660d61  push 1                            
+00660d63  push 0                            
+00660d65  push 1                            
+00660d67  push 0x9dc53c                      ;"vehControlMode"
+00660d6c  mov dword ptr [0xbcd180], eax     
+00660d71  call 0x651910                     
+00660d76  push 0x9dd354                     
+00660d7b  push 0                            
+00660d7d  push 0x2710                       
+00660d82  push 0                            
+00660d84  push 0xbb8                        
+00660d89  push 0xa41964                      ;"vehRecenterDelay"
+00660d8e  mov dword ptr [0xbcd1b0], eax     
+00660d93  call 0x651910                     
+00660d98  add esp, 0x48                     
+00660d9b  push 0x9dd354                     
+00660da0  push 0x80                         
+00660da5  push 0                            
+00660da7  push 0x9dbd08                      ;"vehLockTurretToPlayerView"
+00660dac  mov dword ptr [0xbcd1d4], eax     
+00660db1  call 0x45bb20                     
+00660db6  push 0x9dd354                     
+00660dbb  push 0x80                         
+00660dc0  push 1                            
+00660dc2  push 0x9a6a44                      ;"vehLocationalVehicleSeatEntry"
+00660dc7  mov dword ptr [0xbcaed8], eax     
+00660dcc  call 0x45bb20                     
+00660dd1  fld dword ptr [0xa470f4]          
+00660dd7  add esp, 0x20                     
+00660dda  push 0x9dd354                     
+00660ddf  push 0                            
+00660de1  sub esp, 0xc                      
+00660de4  fstp dword ptr [esp + 8]          
+00660de8  mov dword ptr [0xbcd244], eax     
+00660ded  fldz                              
+00660def  fstp dword ptr [esp + 4]          
+00660df3  fld dword ptr [0x9d3b8c]          
+00660df9  fstp dword ptr [esp]              
+00660dfc  push 0xa13690                     
+00660e01  call 0x679020                     
+00660e06  push 0x9dd354                     
+00660e0b  push 0x1000                       
+00660e10  push 1                            
+00660e12  push 0xa1f658                      ;"vehicle_riding"
+00660e17  mov dword ptr [0xbcd144], eax     
+00660e1c  call 0x45bb20                     
+00660e21  push 0x9dd354                     
+00660e26  push 0x1000                       
+00660e2b  push 1                            
+00660e2d  push 0x9ae870                      ;"vehicle_selfCollision"
+00660e32  mov dword ptr [0xbcaf34], eax     
+00660e37  call 0x45bb20                     
+00660e3c  push 0x9dd354                     
+00660e41  push 0                            
+00660e43  push 0                            
+00660e45  push 0x9b6cb0                      ;"debugRenderPlayerCollision"
+00660e4a  mov dword ptr [0xbcafcc], eax     
+00660e4f  call 0x45bb20                     
+00660e54  add esp, 0x48                     
+00660e57  push 0x9dd354                     
+00660e5c  push 0                            
+00660e5e  push 1                            
+00660e60  push 0xa2b4a0                      ;"bg_disableWeaponPlantingInWater"
+00660e65  mov dword ptr [0xbcaf4c], eax     
+00660e6a  call 0x45bb20                     
+00660e6f  fld dword ptr [0x9e5568]          
+00660e75  add esp, 0x10                     
+00660e78  push 0x9dd354                     
+00660e7d  push 0                            
+00660e7f  sub esp, 0xc                      
+00660e82  fstp dword ptr [esp + 8]          
+00660e86  mov dword ptr [0xbcd1ac], eax     
+00660e8b  fldz                              
+00660e8d  fstp dword ptr [esp + 4]          
+00660e91  fld dword ptr [0x9d2b50]          
+00660e97  fstp dword ptr [esp]              
+00660e9a  push 0x9a6e5c                      ;"bg_plantInWaterDepth"
+00660e9f  call 0x679020                     
+00660ea4  push 0x9dd354                     
+00660ea9  push 0                            
+00660eab  push 0                            
+00660ead  push 0xa08430                      ;"bg_drawGrenadeInHand"
+00660eb2  mov dword ptr [0xbcd228], eax     
+00660eb7  call 0x45bb20                     
+00660ebc  push 0x9dd354                     
+00660ec1  push 0                            
+00660ec3  push 0                            
+00660ec5  push 0x9da2ec                      ;"bg_playStandToCrouchAnims"
+00660eca  mov dword ptr [0xbcaf0c], eax     
+00660ecf  call 0x45bb20                     
+00660ed4  fld dword ptr [0xa1c604]          
+00660eda  add esp, 0x38                     
+00660edd  push 0x9dd354                     
+00660ee2  push 0                            
+00660ee4  sub esp, 0xc                      
+00660ee7  fstp dword ptr [esp + 8]          
+00660eeb  mov dword ptr [0xbcafc4], eax     
+00660ef0  fldz                              
+00660ef2  fstp dword ptr [esp + 4]          
+00660ef6  fld dword ptr [0xa4d4c8]          
+00660efc  fstp dword ptr [esp]              
+00660eff  push 0x9e7470                      ;"bg_maxWeaponAnimScale"
+00660f04  call 0x679020                     
+00660f09  fld dword ptr [0x9f2500]          
+00660f0f  add esp, 0x18                     
+00660f12  push 0x9dd354                     
+00660f17  push 0x5000                       
+00660f1c  sub esp, 0xc                      
+00660f1f  fstp dword ptr [esp + 8]          
+00660f23  mov dword ptr [0xbcd208], eax     
+00660f28  fld dword ptr [0xa27274]          
+00660f2e  fstp dword ptr [esp + 4]          
+00660f32  fldz                              
+00660f34  fstp dword ptr [esp]              
+00660f37  push 0x9caebc                      ;"bg_gunXOffset"
+00660f3c  call 0x679020                     
+00660f41  mov dword ptr [0xbcd24c], eax     
+00660f46  push 0x9dd354                     
+00660f4b  push 0                            
+00660f4d  push 0xa01b14                      ;"tag_weapon_left"
+00660f52  push 0xa2fc80                      ;"bg_weaponleftbone"
+00660f57  call 0x59b3b0                     
+00660f5c  push 0x9dd354                     
+00660f61  push 0                            
+00660f63  push 0xa2fbcc                      ;"tag_weapon_right"
+00660f68  push 0xa41f78                      ;"bg_weaponrightbone"
+00660f6d  mov dword ptr [0xbcd194], eax     
+00660f72  call 0x59b3b0                     
+00660f77  push 0x9dd354                     
+00660f7c  push 0x80                         
+00660f81  push 0x1e                         
+00660f83  push 0                            
+00660f85  push 0xa                          
+00660f87  push 0xa04b5c                      ;"bg_slopeFrames"
+00660f8c  mov dword ptr [0xbcaee0], eax     
+00660f91  call 0x651910                     
+00660f96  add esp, 0x50                     
+00660f99  push 0x9dd354                     
+00660f9e  push 0                            
+00660fa0  push 0                            
+00660fa2  push 0xa08c8c                      ;"debug_rope"
+00660fa7  mov dword ptr [0xbcaf1c], eax     
+00660fac  call 0x45bb20                     
+00660fb1  fld dword ptr [0x9b4a00]          
+00660fb7  add esp, 0x10                     
+00660fba  push 0x9dd354                     
+00660fbf  push 0x1000                       
+00660fc4  sub esp, 0xc                      
+00660fc7  fstp dword ptr [esp + 8]          
+00660fcb  mov dword ptr [0xbcd11c], eax     
+00660fd0  fldz                              
+00660fd2  fstp dword ptr [esp + 4]          
+00660fd6  fld dword ptr [0x9d045c]          
+00660fdc  fstp dword ptr [esp]              
+00660fdf  push 0x9f8284                      ;"vehicle_sounds_cutoff"
+00660fe4  call 0x679020                     
+00660fe9  fld dword ptr [0x9b4a00]          
+00660fef  add esp, 0x18                     
+00660ff2  push 0x9dd354                     
+00660ff7  push 0x4000                       
+00660ffc  sub esp, 0xc                      
+00660fff  fstp dword ptr [esp + 8]          
+00661003  mov dword ptr [0xbcd040], eax     
+00661008  fldz                              
+0066100a  fstp dword ptr [esp + 4]          
+0066100e  fld dword ptr [0x9f2500]          
+00661014  fstp dword ptr [esp]              
+00661017  push 0xa10454                     
+0066101c  call 0x679020                     
+00661021  push 0x9dd354                     
+00661026  push 0x4000                       
+0066102b  push 0                            
+0066102d  push 0x9a79ec                      ;"show_reticle_during_swimming"
+00661032  mov dword ptr [0xbcd1c8], eax     
+00661037  call 0x45bb20                     
+0066103c  fld dword ptr [0x9b4a00]          
+00661042  add esp, 0x28                     
+00661045  push 0x9dd354                     
+0066104a  push 0x4000                       
+0066104f  sub esp, 0xc                      
+00661052  fstp dword ptr [esp + 8]          
+00661056  mov dword ptr [0xbcd210], eax     
+0066105b  fldz                              
+0066105d  fstp dword ptr [esp + 4]          
+00661061  fld dword ptr [0x9c4af4]          
+00661067  fstp dword ptr [esp]              
+0066106a  push 0xa24b5c                      ;"ragdoll_reactivation_cutoff"
+0066106f  call 0x679020                     
+00661074  push 0x9dd354                     
+00661079  push 0x80                         
+0066107e  push 0x400                        
+00661083  push -1                           
+00661085  push -1                           
+00661087  push 0x9d11a8                      ;"waterbrush_entity"
+0066108c  mov dword ptr [0xbcaeb0], eax     
+00661091  call 0x651910                     
+00661096  add esp, 0x30                     
+00661099  mov dword ptr [0xbcd160], eax     
+0066109e  fld dword ptr [0x9f2500]          
+006610a4  push 0x9dd354                     
+006610a9  push 0x4000                       
+006610ae  sub esp, 0xc                      
+006610b1  fstp dword ptr [esp + 8]          
+006610b5  fldz                              
+006610b7  fstp dword ptr [esp + 4]          
+006610bb  fld dword ptr [0xa187a0]          
+006610c1  fstp dword ptr [esp]              
+006610c4  push 0xa22d68                      ;"dive2swim"
+006610c9  call 0x679020                     
+006610ce  fld dword ptr [0x9e6478]          
+006610d4  add esp, 0x18                     
+006610d7  push 0x9dd354                     
+006610dc  push 0x4000                       
+006610e1  sub esp, 0xc                      
+006610e4  fstp dword ptr [esp + 8]          
+006610e8  mov dword ptr [0xbcd0fc], eax     
+006610ed  fldz                              
+006610ef  fstp dword ptr [esp + 4]          
+006610f3  fld dword ptr [0x9f2500]          
+006610f9  fstp dword ptr [esp]              
+006610fc  push 0xa139c8                      ;"dive_recharge"
+00661101  call 0x679020                     
+00661106  fld dword ptr [0x9f2500]          
+0066110c  add esp, 0x18                     
+0066110f  push 0x9dd354                     
+00661114  push 0x1000                       
+00661119  sub esp, 0xc                      
+0066111c  fstp dword ptr [esp + 8]          
+00661120  mov dword ptr [0xbcd1a0], eax     
+00661125  fldz                              
+00661127  fst dword ptr [esp + 4]           
+0066112b  fstp dword ptr [esp]              
+0066112e  push 0x9f55a8                      ;"playerPushAmount"
+00661133  call 0x679020                     
+00661138  push 0x9dd354                     
+0066113d  push 0                            
+0066113f  push 1                            
+00661141  push 0xa01ca4                      ;"bg_freeCamClipToHeliPatch"
+00661146  mov dword ptr [0xbcaf60], eax     
+0066114b  call 0x45bb20                     
+00661150  mov dword ptr [0xbcd1b4], eax     
+00661155  call 0x579f20                     
+0066115a  call 0x4b45f0                     
+0066115f  call 0x562eb0                     
+00661164  call 0x4cef50                     
+00661169  call 0x5485f0                     
+0066116e  call 0x55c5b0                     
+00661173  push 0x9dd354                     
+00661178  push 0x80                         
+0066117d  push 0                            
+0066117f  push 0x9f5c3c                      ;"bg_aqs"
+00661184  call 0x45bb20                     
+00661189  push 0x9dd354                     
+0066118e  push 0x80                         
+00661193  push 2                            
+00661195  push 0                            
+00661197  push 2                            
+00661199  push 0x9bb86c                      ;"bg_aqsStyle"
+0066119e  mov dword ptr [0xbcaef4], eax     
+006611a3  call 0x651910                     
+006611a8  add esp, 0x50                     
+006611ab  push 0x9dd354                     
+006611b0  push 0x80                         
+006611b5  push 1                            
+006611b7  push 0xa449fc                      ;"bg_ads"
+006611bc  mov dword ptr [0xbcd220], eax     
+006611c1  call 0x45bb20                     
+006611c6  add esp, 0x10                     
+006611c9  mov dword ptr [0xbcd0e0], eax     
+006611ce  call 0x5199e0                     
+006611d3  jmp 0x5da490                      
+006611d8  int3                              
+006611d9  int3                              
+006611da  int3                              
+006611db  int3                              
+006611dc  int3                              
+006611dd  int3                              
+006611de  int3                              
+006611df  int3                              
