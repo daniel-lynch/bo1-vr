@@ -8,6 +8,12 @@
 Everything structural works. The final link — a non-NULL `FnTable` — could not be
 reached, for the reason recorded under "Where this stopped".
 
+> **Re-run history.** First measured under GCC 13-posix, then re-run in full
+> under **GCC 13-win32** in a fresh scratch `WINEARCH=win32` prefix on wine-11.0.
+> Every entry point still resolves, every error code is the same, and the
+> struct-return disassembly in the addendum is byte-for-byte identical. The
+> transcripts below are from the 13-win32 run.
+
 ---
 
 ## Setup
@@ -40,7 +46,7 @@ $ WINEPREFIX=... WINEARCH=win32 wine host.exe
 host: pid=32, pointer size=4
 
 === EXPERIMENT 1: OpenVR C API from a mingw 32-bit DLL ===
-built with GCC 13-posix, target i686 (32-bit)
+built with GCC 13-win32, target i686 (32-bit)
 
 [1] LoadLibraryA("openvr_api.dll")
     loaded at 77af0000

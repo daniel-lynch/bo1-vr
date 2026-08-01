@@ -37,8 +37,16 @@ configuration, and remains untested.** The good news is that the configuration
 that actually matters for this project, Proton 10.0-4b, is the classic one, where
 everything below works.
 
-Environment: wine-11.0 (winehq-stable), `WINEARCH=win32` prefix, target built by
-`i686-w64-mingw32-gcc` 13 with `-O0 -gdwarf-4`, not stripped.
+Environment: wine-11.0 (winehq-stable), fresh scratch `WINEARCH=win32` prefix,
+target built by `i686-w64-mingw32-gcc` 13 with `-O0 -gdwarf-4`, not stripped.
+
+> **Re-run history.** First measured under GCC 13-posix, then re-run in full
+> under **GCC 13-win32** (the `update-alternatives` default). Everything below
+> reproduces: same breakpoint deferral behaviour in both debuggers, same
+> five-frame backtrace, same locals and `finish` value, same faulting source
+> line, same `set breakpoint pending on` gotcha. gdb is still 15.1
+> (`Ubuntu 15.1-1ubuntu1~24.04.1`). The only measured difference is the DWARF-5
+> CU count — see the DWARF section below.
 
 > `winedbg target.exe` fails with `Couldn't start process`. It needs a path
 > separator: use `winedbg ./target.exe`. Also, Wine 11's winedbg no longer
@@ -218,11 +226,59 @@ Every DWARF-5 CU comes from `/usr/src/mingw-w64-11.0.1-3build1/mingw-w64-crt/...
 — Ubuntu's precompiled CRT objects. `-gdwarf-4` governs only the CUs we compile,
 and no flag can change the shipped ones short of rebuilding mingw-w64-crt.
 
-**This does not break debugging.** Wine's dbghelp skips CUs above its supported
-version individually rather than abandoning the module, and every experiment above
-resolved our own symbols and line numbers correctly with those DWARF-5 CRT CUs
-present. `make verify` enforces DWARF ≤ 4 for first-party and MinHook CUs and only
-*reports* the CRT ones.
+### How many DWARF-5 CUs — this depends on the threading model
+
+`make verify` counts them. **29 under GCC 13-win32, 35 under GCC 13-posix.**
+The delta is winpthreads, which the win32-threading runtime does not link:
+
+```
+$ diff <(win32 DWARF-5 CU list) <(posix DWARF-5 CU list)
+> cond.c        > misc.c     > mutex.c    > rwlock.c
+> sched.c       > spinlock.c > thread.c              # winpthreads, posix only
+< tlsmthread.c                                       # win32 only
+```
+
+The 29 under 13-win32 are all `mingw-w64-crt`: `acrt_iob_func.c`, `cinitexe.c`,
+`crtdll.c`, `CRT_fp10.c`, `dllentry.c`, `dmisc.c`, `gccmain.c`, `gdtoa.c`,
+`gmisc.c`, `lc_locale_func.c`, `___mb_cur_max_func.c`, `mbrtowc.c`,
+`mingw_helpers.c`, `mingw_lock.c`, `mingw_pformat.c`, `mingw_vfprintf.c`,
+`misc.c`, `natstart.c`, `onexit_table.c`, `pesect.c`, `pseudo-reloc.c`,
+`pseudo-reloc-list.c`, `strnlen.c`, `tlsmcrt.c`, `tlsmthread.c`, `tlssup.c`,
+`tlsthrd.c`, `wcrtomb.c`, `wcsnlen.c`.
+
+**This does not break debugging under either model.** Wine's dbghelp skips CUs
+above its supported version individually rather than abandoning the module, and
+every experiment above resolved our own symbols and line numbers correctly with
+those DWARF-5 CRT CUs present. `make verify` enforces DWARF ≤ 4 for first-party
+and MinHook CUs and only *reports* the CRT ones.
+
+Verified against the shipped artifact itself, not just this experiment's toy
+target — `dist/dinput8.dll` built with 29 DWARF-5 CRT CUs, debugged through
+`experiments/00_loader_smoke/out/smoke.exe`:
+
+```
+$ printf 'break asi_load_all\ncont\nbt\ncont\nquit\n' | winedbg ./smoke.exe
+No symbols found for asi_load_all
+Unable to add breakpoint, will check again when a new DLL is loaded
+Breakpoint 1 at 0x78a114d0 asi_load_all [/home/dlynch/dev/bo1-vr/src/asi_loader.c:17] in dinput8
+Stopped on breakpoint 1 at 0x78a114d0 asi_load_all [.../src/asi_loader.c:17] in dinput8
+=>0 0x78a114d0 asi_load_all(self=78A113CE) [.../src/asi_loader.c:17] in dinput8 (0x0063fc7c)
+```
+
+```
+$ ... | winedbg --gdb ./smoke.exe        # with `set breakpoint pending on`
+Breakpoint 1, asi_load_all (self=self@entry=0x78a10000)
+#1  0x78a117df in DllMain@12 (inst=0x78a10000, reason=1, reserved=0x0)
+#2  0x78a11351 in __DllMainCRTStartup (hDllHandle=hDllHandle@entry=0x78a10000,
+#3  0x78a113ce in DllMainCRTStartup@12 (hDllHandle=0x78a10000, dwReason=1,
+#4  0x7bcdcf66 in call_dll_entry_point ()
+#5  0x7bce5de9 in MODULE_InitDLL (wm=wm@entry=0x2467d8, reason=reason@entry=1,
+#8  LdrLoadDll@16 (
+```
+
+Our own source line resolves and the backtrace runs from our DLL out through
+Wine's loader — with a `LoadLibrary`-loaded, relocated `dinput8.dll`, no
+`add-symbol-file`, and the DWARF-5 CRT CUs present.
 
 The underlying rule still stands and still matters: had our own CUs been DWARF 5,
 Wine would have found no symbols at all, silently.

@@ -17,11 +17,20 @@ research.
 
 ```
 $ i686-w64-mingw32-g++ -v
---target=i686-w64-mingw32 --disable-sjlj-exceptions --with-dwarf2
-gcc version 13-posix (GCC)
+--target=i686-w64-mingw32 --enable-threads=win32 --program-suffix=-win32
+--disable-sjlj-exceptions --with-dwarf2
+Thread model: win32
+gcc version 13-win32 (GCC)
 ```
 
 DWARF-2 unwinding. Not SEH, not SJLJ — as expected for 32-bit mingw.
+
+> **Re-run history.** This experiment was first measured under **GCC 13-posix**
+> and later re-run in full under **GCC 13-win32** (the `update-alternatives`
+> default on this machine) in a fresh scratch `WINEARCH=win32` prefix on
+> wine-11.0. **Every pass/terminate result below is identical under both
+> threading models.** The one thing that changed is which runtime DLLs have to
+> be shipped — see "Runtime DLL closure" below.
 
 ## Cases
 
@@ -52,7 +61,11 @@ $ WINEPREFIX=... WINEARCH=win32 wine host2.exe      # in each variant dir
 | B cross-module catch | **terminate** | PASS | PASS |
 | C cross-module RTTI | (not reached) | PASS | PASS |
 | D through a C frame | (not reached) | PASS | **terminate** |
-| exit code | **3** | 0 | 0 (dies at D) |
+| exit code | **3** | 0 | **3** (dies at D) |
+
+*(The `noeh` exit code was previously recorded as 0 in this table. It is 3 —
+`std::terminate` gives the same exit code whichever case triggers it. Corrected
+after re-measurement.)*
 
 ### Static variant, case B
 
@@ -88,11 +101,15 @@ proving that unwinding works through a *GCC-compiled* C frame — not through an
 MSVC frame, which is the situation that actually matters.
 
 Rebuilt that one object with unwind tables suppressed, which is a far better proxy
-for an MSVC-built game frame:
+for an MSVC-built game frame. This is now the `noeh` target in the Makefile
+(originally it was built by hand, which made it unreproducible); the rule asserts
+the section is really gone rather than trusting the flags:
 
 ```
-$ i686-w64-mingw32-gcc -m32 -O1 -fno-asynchronous-unwind-tables -fno-unwind-tables -c cframe.c
-$ i686-w64-mingw32-objdump -h out-noeh/cframe.o | grep eh_frame   # (no output)
+$ make noeh
+i686-w64-mingw32-gcc -m32 -O1 -gdwarf-4 -Wall -Wno-format-zero-length \
+    -fno-asynchronous-unwind-tables -fno-unwind-tables -c -o out-noeh/cframe.o cframe.c
+  OK: out-noeh/cframe.o has no .eh_frame
 ```
 
 Result:
@@ -109,6 +126,68 @@ terminate called after throwing an instance of 'std::runtime_error'
 hook is MSVC-built game code with no GCC unwind info — and it validates the
 "never let an exception escape a hook callback" rule as a hard requirement rather
 than a stylistic one.
+
+## Runtime DLL closure — this DID change with the threading model
+
+The original notes said a shared C++ plugin must ship **three** DLLs. Under
+**GCC 13-win32 it needs only two.** `libwinpthread-1.dll` is not in the closure
+at all, because the win32-threading libgcc and libstdc++ do not use winpthreads.
+
+```
+$ i686-w64-mingw32-objdump -p out-shared/host2.exe out-shared/throwlib.dll | grep "DLL Name:" | sort -u
+	DLL Name: KERNEL32.dll
+	DLL Name: libgcc_s_dw2-1.dll
+	DLL Name: libstdc++-6.dll
+	DLL Name: msvcrt.dll
+
+$ i686-w64-mingw32-objdump -p out-shared/libstdc++-6.dll | grep "DLL Name:" | sort -u
+	DLL Name: KERNEL32.dll
+	DLL Name: libgcc_s_dw2-1.dll
+	DLL Name: msvcrt.dll
+
+$ i686-w64-mingw32-objdump -p out-shared/libgcc_s_dw2-1.dll | grep "DLL Name:" | sort -u
+	DLL Name: KERNEL32.dll
+	DLL Name: msvcrt.dll
+```
+
+Side by side with the 13-posix runtime on the same machine:
+
+```
+$ i686-w64-mingw32-objdump -p /usr/lib/gcc/i686-w64-mingw32/13-posix/libstdc++-6.dll | grep "DLL Name:"
+	DLL Name: KERNEL32.dll
+	DLL Name: libgcc_s_dw2-1.dll
+	DLL Name: libwinpthread-1.dll        <- present under posix
+	DLL Name: msvcrt.dll
+
+$ i686-w64-mingw32-objdump -p /usr/lib/gcc/i686-w64-mingw32/13-win32/libstdc++-6.dll | grep "DLL Name:"
+	DLL Name: KERNEL32.dll
+	DLL Name: libgcc_s_dw2-1.dll
+	DLL Name: msvcrt.dll                 <- no winpthread under win32
+```
+
+| | GCC 13-win32 | GCC 13-posix |
+|---|---|---|
+| ship beside the game | `libgcc_s_dw2-1.dll`, `libstdc++-6.dll` | those two **plus** `libwinpthread-1.dll` |
+
+Confirmed by deletion, not just by reading import tables. Removing
+`libwinpthread-1.dll` from `out-shared/` under 13-win32 changes nothing — all
+four cases still pass, exit 0. Removing `libgcc_s_dw2-1.dll` kills the process
+before `main`:
+
+```
+$ WINEDEBUG=err+module wine host2.exe
+0024:err:module:import_dll Library libgcc_s_dw2-1.dll (which is needed by L"...\out-shared\host2.exe") not found
+0024:err:module:import_dll Library libgcc_s_dw2-1.dll (which is needed by L"...\out-shared\libstdc++-6.dll") not found
+0024:err:module:import_dll Library libstdc++-6.dll (which is needed by L"...\out-shared\host2.exe") not found
+0024:err:module:loader_init Importing dlls for L"...\out-shared\host2.exe" failed, status c0000135
+```
+
+(exit 53, no program output at all — the failure happens in the PE loader.)
+
+The Makefile's `.runtime` rule no longer hardcodes the three names. It reads the
+import tables of the built binaries and follows them transitively, so it copies
+two DLLs under 13-win32 and three under 13-posix without needing to know which
+compiler ran.
 
 ## With a debugger attached
 
@@ -137,6 +216,10 @@ same failure and the same exit code as undebugged.
 |---|---|---|---|
 | shared | all pass, exit 0 | all pass, exit 0 | all pass, exit 0 |
 | static | fails at B, exit 3 | fails at B | fails at B, exit 3 |
+| noeh   | fails at D, exit 3 | fails at D | fails at D, exit 3 |
+
+All nine cells re-measured under GCC 13-win32; all nine match the original
+13-posix measurement.
 
 **The debugger changes nothing.** The MSVC-ABI report does not carry over to the
 GNU ABI.
@@ -158,6 +241,8 @@ GNU ABI.
    was not in the original research and would have been a confusing bug.
    The loader itself is pure C and stays `-static` deliberately — no runtime DLL
    dependencies.
+   **Do not hardcode the DLL list**: it is two DLLs under GCC 13-win32 and three
+   under GCC 13-posix. Derive it from `objdump -p`.
 3. **An exception must never escape a hook callback** — confirmed by direct test,
    not merely by reasoning. Wrap every callback body in `try { } catch (...) { }`,
    or compile plugins `-fno-exceptions`, and use

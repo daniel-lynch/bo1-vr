@@ -7,6 +7,11 @@ confirmed two of the established facts by direct observation.
 `smoke.exe` loads `dinput8.dll`, calls `DirectInput8Create` through it, and
 `dummy.asi` proves the plugin scan works.
 
+> **Re-run history.** First measured under GCC 13-posix, then re-run in full
+> under **GCC 13-win32** in a fresh scratch `WINEARCH=win32` prefix on wine-11.0.
+> All three findings reproduce identically; the transcripts below are from the
+> 13-win32 run.
+
 ## Result — the loader works end to end
 
 ```
@@ -18,7 +23,7 @@ cd out && WINEDLLOVERRIDES="dinput8=n,b" wine smoke.exe
 smoke: loading ./dinput8.dll
 [bo1-vr] =====================================================
 [bo1-vr] bo1-vr ASI loader (dinput8.dll proxy)
-[bo1-vr]   built Aug  1 2026 16:02:43 with GCC 13-posix
+[bo1-vr]   built Aug  1 2026 16:27:23 with GCC 13-win32
 [bo1-vr]   module: Z:\...\smoke\dinput8.dll
 [bo1-vr]   pid=32
 [bo1-vr] =====================================================

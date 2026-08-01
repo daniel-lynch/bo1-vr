@@ -41,6 +41,27 @@ On Ubuntu 24.04 that installs GCC 13 for `i686-w64-mingw32`, configured
 `--disable-sjlj-exceptions --with-dwarf2` (verified with `g++ -v`), i.e. the
 DWARF-2 exception model. That configuration detail matters — see Decision 6.
 
+**Two threading models are packaged, and `update-alternatives` picks one.**
+Ubuntu ships both `i686-w64-mingw32-gcc-win32` (`Thread model: win32`) and
+`i686-w64-mingw32-gcc-posix` (`Thread model: posix`); the unsuffixed
+`i686-w64-mingw32-gcc` is an alternatives symlink and **win32 has the higher
+priority**, so a default install compiles with `gcc version 13-win32`. Check
+which you have — the banner printed by `dist/dinput8.dll` reports it:
+
+```sh
+i686-w64-mingw32-gcc -v 2>&1 | grep -E 'Thread model|gcc version'
+```
+
+Everything in this repository has been measured under **both** models and every
+behavioural result is identical. The threading model changes exactly two
+observable things, both cosmetic-to-us:
+
+* the shared C++ runtime's own dependency list — 13-posix's `libgcc_s_dw2-1.dll`
+  and `libstdc++-6.dll` import `libwinpthread-1.dll`, 13-win32's do not
+  (Decision 7);
+* how many prebuilt-CRT DWARF-5 CUs land in the output — 35 under 13-posix,
+  29 under 13-win32, because winpthreads is not linked in (Decision 4).
+
 ### Installing
 
 Copy `dist/dinput8.dll` next to `BlackOps.exe`. Drop any `.asi` plugins in the
@@ -105,10 +126,19 @@ symbols at all.
 *we* compile. The distro's prebuilt mingw-w64 runtime — `mingw-w64-crt`
 (`crtdll.c`, `tlssup.c`, `pseudo-reloc.c`, …), `winpthreads`, `libgcc` — ships
 precompiled as DWARF 5 and gets linked into every binary. `dist/dinput8.dll`
-therefore contains ~35 DWARF-5 CUs that no compiler flag of ours can change. This
-turns out **not** to matter: symbol and line resolution for our own code works
-fine, both in winedbg and in gdb. `make verify` identifies our CUs positively (by
-path) and only *reports* the toolchain ones.
+therefore contains DWARF-5 CUs that no compiler flag of ours can change: **29
+under GCC 13-win32, 35 under GCC 13-posix** (`make verify` prints the count).
+The difference is winpthreads — the posix build links `cond.c`, `mutex.c`,
+`rwlock.c`, `sched.c`, `spinlock.c`, `thread.c` and winpthreads' `misc.c`, the
+win32 build links none of them and picks up `tlsmthread.c` instead.
+
+This turns out **not** to matter under either model: symbol and line resolution
+for our own code works fine, both in winedbg and in gdb. Re-verified directly
+against the shipped artifact under 13-win32 — `break asi_load_all` resolves to
+`src/asi_loader.c:17` in native winedbg and gives a full backtrace through
+`DllMain@12` → `LdrLoadDll@16` in `--gdb` mode, with all 29 DWARF-5 CRT CUs
+present. `make verify` identifies our CUs positively (by path) and only *reports*
+the toolchain ones.
 
 MinHook's own MinGW makefile passes `-s` in its `LDFLAGS`; the top-level Makefile
 overrides `CFLAGS` when invoking it so the static library keeps its debug info.
@@ -164,6 +194,7 @@ either.
 ### 7. C++ plugins must link libstdc++/libgcc *dynamically*
 
 Discovered in Exp. 2 and **not** in the original research notes.
+Re-measured under GCC 13-win32 and GCC 13-posix; the result is the same in both.
 
 With `-static-libgcc -static-libstdc++ -static`, an exception thrown in a DLL and
 caught in another module calls `std::terminate`, because each module gets its own
@@ -171,11 +202,37 @@ unwinder and its own copies of the `type_info` objects. With the shared
 `libgcc_s_dw2-1.dll` + `libstdc++-6.dll`, cross-module throw/catch and
 cross-module RTTI both work correctly.
 
+**Which DLLs to ship depends on the threading model — measure, do not guess.**
+The full transitive import closure of a C++ plugin built shared, from
+`i686-w64-mingw32-objdump -p`:
+
+| | GCC 13-win32 | GCC 13-posix |
+|---|---|---|
+| plugin `.dll` / host `.exe` imports | `KERNEL32.dll`, `msvcrt.dll`, `libgcc_s_dw2-1.dll`, `libstdc++-6.dll` | same |
+| `libstdc++-6.dll` imports | `KERNEL32.dll`, `msvcrt.dll`, `libgcc_s_dw2-1.dll` | + `libwinpthread-1.dll` |
+| `libgcc_s_dw2-1.dll` imports | `KERNEL32.dll`, `msvcrt.dll` | + `libwinpthread-1.dll` |
+| **must ship beside `BlackOps.exe`** | **2 DLLs** — `libgcc_s_dw2-1.dll`, `libstdc++-6.dll` | **3 DLLs** — plus `libwinpthread-1.dll` |
+
+`KERNEL32.dll` and `msvcrt.dll` come from the prefix. Confirmed by deletion under
+13-win32: removing `libwinpthread-1.dll` from the output directory changes
+nothing (all four exception cases still pass, exit 0), while removing
+`libgcc_s_dw2-1.dll` kills the process before `main` with
+
+```
+err:module:import_dll Library libgcc_s_dw2-1.dll (which is needed by ...\host2.exe) not found
+err:module:loader_init Importing dlls for ...\host2.exe failed, status c0000135
+```
+
+`experiments/02_cpp_exceptions/Makefile` therefore derives the list by walking
+the actual import tables rather than hardcoding names, so it stays correct under
+either compiler.
+
 The loader itself is pure C and links `-static` deliberately, so it has no runtime
-DLL dependencies at all (`make verify` asserts no libgcc dependency). Any C++
-`.asi` plugin that throws across a module boundary must ship the two runtime DLLs
-beside `BlackOps.exe` — or, preferably, catch everything internally and never
-throw across a boundary at all, which is required anyway by Decision 6.
+DLL dependencies at all — `dist/dinput8.dll` imports only `KERNEL32.dll` and
+`msvcrt.dll` (`make verify` asserts no libgcc dependency). Any C++ `.asi` plugin
+that throws across a module boundary must ship the runtime DLLs beside
+`BlackOps.exe` — or, preferably, catch everything internally and never throw
+across a boundary at all, which is required anyway by Decision 6.
 
 ### 8. OpenVR: use the C API (`openvr_capi.h` + `FnTable:`), not the C++ vtable
 
@@ -246,6 +303,15 @@ right, and Proton Experimental (11.x) is correct via `arch_pe_dir()`.
 Verified on four real Proton 10.0-4b prefixes on this machine — every one has the
 32-bit DLL in `system32` and the 64-bit DLL in `syswow64`.
 
+Re-checked later across **all 23** prefixes on this machine that contain an
+`openvr_api_dxvk.dll`. Five are swapped: the four Proton 10 ones above plus a
+`GE-Proton10-15` prefix. Every Proton 7/8/9/11 prefix is correct. Note that some
+prefixes whose `version` file now reads `10.1000-200` are *correct* — the
+`version` stamp tracks the Proton currently running the prefix, while the DLL
+copy happened at prefix creation, so **the stamp is not a reliable predictor.
+Check the actual files** with `file drive_c/windows/syswow64/openvr_api_dxvk.dll`
+before assuming either way.
+
 Why it matters here: DXVK's VR submit path loads `openvr_api_dxvk.dll`, and in a
 32-bit process that name resolves from `syswow64` — which under Proton 10.0-4b
 contains the **64-bit** build, so the load fails.
@@ -260,8 +326,10 @@ Workarounds: swap the two files in the prefix after it is created, ship a correc
 | | |
 |---|---|
 | OS | Ubuntu 24.04.4 LTS, kernel 6.8 |
-| Cross compiler | GCC 13-posix, `i686-w64-mingw32`, DWARF-2 exceptions |
-| Wine used for experiments | wine-11.0 (winehq-stable, `/opt/wine-stable`) |
+| Cross compiler | **GCC 13-win32** (`Thread model: win32`), `i686-w64-mingw32`, `--disable-sjlj-exceptions --with-dwarf2` — the alternatives default |
+| Also measured against | GCC 13-posix (`i686-w64-mingw32-gcc-posix`) — identical behaviour, different runtime DLL closure; see Decisions 4 and 7 |
+| Wine used for experiments | wine-11.0 (winehq-stable, `/opt/wine-stable`; `/usr/bin/wine` is a symlink to it) |
+| Wine prefix | fresh scratch `WINEARCH=win32` prefix, not `~/.wine` and not a Proton prefix |
 | Proton installed | 10.0-4b (`proton-10.0-4b`) — meets the 10.0-2 minimum |
 | OpenVR SDK | Valve `openvr` master, `IVRCompositor_029` / `IVRSystem_026` |
 | VR runtime | xrizer via the WiVRn flatpak, registered in `~/.config/openvr/openvrpaths.vrpath` |
