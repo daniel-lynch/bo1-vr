@@ -155,18 +155,25 @@ verify: $(TARGET)
 	@awk '/Compilation Unit @/{v="";n=""} \
 	      /Version:/{if(v=="")v=$$2} \
 	      /DW_AT_name/{if(n==""){n=$$NF; print v"\t"n}}' $(BUILD)/dwarf.txt > $(BUILD)/cus.txt
-	@bad=$$(awk -F'\t' '$$1>4 && $$2 !~ /mingw-w64-crt/ {print}' $(BUILD)/cus.txt); \
+	@# Identify OUR CUs positively rather than blocklisting toolchain paths:
+	@# ours are absolute paths under $(TOP), plus MinHook's relative "src/...".
+	@# Everything else came out of the distro's prebuilt mingw-w64 (crt,
+	@# winpthreads, libgcc) and no compiler flag of ours can change its version.
+	@bad=$$(awk -F'\t' -v top="$(TOP)" \
+	        '$$1>4 && (index($$2, top)==1 || $$2 ~ /^src\//) {print}' $(BUILD)/cus.txt); \
 	 if [ -n "$$bad" ]; then \
 		echo "FAIL: our own CUs emitted DWARF > 4 -- Wine dbghelp will not read them:"; \
 		echo "$$bad"; exit 1; \
 	 fi
 	@echo "OK: all first-party + MinHook CUs are DWARF 4"
-	@crt=$$(awk -F'\t' '$$1>4 && $$2 ~ /mingw-w64-crt/' $(BUILD)/cus.txt | wc -l); \
-	 if [ "$$crt" -gt 0 ]; then \
-		echo "NOTE: $$crt CU(s) from Ubuntu's prebuilt mingw-w64-crt are DWARF 5."; \
-		echo "      -gdwarf-4 cannot change these; they are shipped precompiled."; \
-		echo "      Wine's dbghelp skips over-version CUs individually, so our own"; \
-		echo "      symbols still resolve -- see experiments/03_winedbg/RESULTS.md."; \
+	@ext=$$(awk -F'\t' -v top="$(TOP)" \
+	        '$$1>4 && !(index($$2, top)==1 || $$2 ~ /^src\//)' $(BUILD)/cus.txt | wc -l); \
+	 if [ "$$ext" -gt 0 ]; then \
+		echo "NOTE: $$ext CU(s) from the distro's prebuilt mingw-w64 runtime are DWARF 5"; \
+		echo "      (mingw-w64-crt, winpthreads, libgcc). These ship precompiled;"; \
+		echo "      -gdwarf-4 cannot change them. Wine's dbghelp skips over-version"; \
+		echo "      CUs individually, so our own symbols still resolve --"; \
+		echo "      see experiments/03_winedbg/RESULTS.md."; \
 	 fi
 	@echo "--- runtime DLL dependencies (libgcc must NOT appear) ---"
 	@$(OBJDUMP) -p $(TARGET) | grep "DLL Name:" | sort -u

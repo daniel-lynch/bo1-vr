@@ -102,12 +102,13 @@ default. Get this wrong and Wine does not warn or degrade; it silently finds no
 symbols at all.
 
 **Caveat found while testing (see Exp. 3):** `-gdwarf-4` only governs the CUs
-*we* compile. Ubuntu's prebuilt `mingw-w64-crt` objects (`crtdll.c`, `tlssup.c`,
-`pseudo-reloc.c`, …) are shipped precompiled as DWARF 5 and get linked into every
-binary. `dist/dinput8.dll` therefore contains 28 DWARF-5 CUs that no compiler flag
-can change. This turns out **not** to matter: symbol and line resolution for our
-own code works fine, both in winedbg and in gdb. `make verify` checks our CUs and
-merely reports the CRT ones.
+*we* compile. The distro's prebuilt mingw-w64 runtime — `mingw-w64-crt`
+(`crtdll.c`, `tlssup.c`, `pseudo-reloc.c`, …), `winpthreads`, `libgcc` — ships
+precompiled as DWARF 5 and gets linked into every binary. `dist/dinput8.dll`
+therefore contains ~35 DWARF-5 CUs that no compiler flag of ours can change. This
+turns out **not** to matter: symbol and line resolution for our own code works
+fine, both in winedbg and in gdb. `make verify` identifies our CUs positively (by
+path) and only *reports* the toolchain ones.
 
 MinHook's own MinGW makefile passes `-s` in its `LDFLAGS`; the top-level Makefile
 overrides `CFLAGS` when invoking it so the static library keeps its debug info.
