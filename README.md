@@ -2,9 +2,12 @@
 
 VR mod scaffolding for **Call of Duty: Black Ops (2010)** running under Proton on Linux.
 
-This repository is the toolchain foundation only. It contains a working 32-bit
-`dinput8.dll` ASI loader and three verification experiments. **It contains no VR
-functionality and hooks nothing in the game yet.**
+This repository is the toolchain foundation. It contains a working 32-bit
+`dinput8.dll` ASI loader and four verification experiments. **It hooks nothing in
+the game yet** — but the VR chain itself is no longer hypothetical: a 32-bit
+mingw DLL running under Proton now gets a **live OpenVR function table** from
+xrizer/Monado and calls through it, with no VR hardware attached. See
+`experiments/04_live_fntable/`.
 
 ---
 
@@ -18,8 +21,10 @@ functionality and hooks nothing in the game yet.**
 | Exp. 1 — OpenVR C API from a mingw DLL | passes up to the point a VR runtime is required |
 | Exp. 2 — C++ exceptions across a DLL boundary | **answered, with a surprise** |
 | Exp. 3 — winedbg on a 32-bit target | **answered — works far better than expected** |
+| Exp. 4 — **live OpenVR FnTable from 32-bit under Proton** | **PASS** — non-NULL table, methods called, `WaitGetPoses` returns a valid HMD pose |
 
 Full commands and raw output live in `experiments/*/RESULTS.md`.
+`experiments/04_live_fntable/run.sh` reproduces the gating result end to end.
 
 ---
 
@@ -254,6 +259,61 @@ without `OPENVR_API_EXPORTS`/`OPENVR_API_NODLL`, `S_API` expands to
 `extern "C" __declspec(dllimport)`, which is not valid C. Define
 `OPENVR_API_NODLL` and resolve everything with `GetProcAddress`.
 
+### 9. Run under Proton's **new-WoW64** (`PROTON_USE_WOW64=1`), not classic WoW64
+
+This is the decision the whole Linux plan rests on, and it was settled by
+measurement in Exp. 4. Read `experiments/04_live_fntable/RESULTS.md` before
+changing it.
+
+Proton's 32-bit PE `vrclient.dll` loads the native OpenVR runtime from a path
+that is fixed at compile time by the **PE** architecture
+(`vrclient_x64/vrclient_main.c`): a 32-bit game always wants
+`$PROTON_VR_RUNTIME/bin/vrclient.so`, where the 64-bit build wants
+`bin/linux64/vrclient.so`.
+
+* **Classic WoW64** puts a 32-bit ELF unix side under the process, so that
+  `bin/vrclient.so` must be a **32-bit** native library. xrizer ships only
+  `bin/linux64/vrclient.so`, and so does OpenComposite. Supplying one would mean
+  building a 32-bit xrizer, a 32-bit OpenXR loader, **and a 32-bit OpenXR
+  runtime** — and there is no i386 Monado, nor any prospect of one without
+  building it from source against a full i386 dev sysroot. This path is a dead
+  end today.
+* **New-WoW64** keeps the unix side 64-bit, so the *same* 64-bit xrizer, OpenXR
+  loader and Monado that already work serve the 32-bit game. Stage the runtime
+  so `$RUNTIME/bin/vrclient.so` is a symlink to `linux64/vrclient.so` and it
+  resolves correctly.
+
+New-WoW64 needs two Proton defects worked around, both applied by
+`tools/patch-proton-wow64-vrclient.py` to a hard-linked *copy* of Proton:
+Proton ships no `x86_64-unix/vrclient.so` for the 32-bit PE to bind to, and
+`struct wow64_vrclient_init_params` leaves `HMODULE winevulkan` unwrapped so
+every field after it is 4 bytes out of step. Both are proven from the shipped
+binary's own disassembly. Report them upstream rather than carrying the patch
+forever.
+
+Two consequences to remember:
+
+* **`SteamGameId` must be set** or nothing works, silently. Proton's `steam.exe`
+  only calls `vrclient_init_registry()` when it thinks it is launching a game,
+  and that is decided purely by `SteamGameId` being present.
+* **An OpenVR method xrizer has not implemented kills the process.** xrizer
+  `todo!()`s panic in Rust and the unwind lands in a frame Wine cannot dispatch.
+  `GetCurrentSceneFocusProcess` and `GetLastFrameRenderer` are two such methods.
+  Check coverage before calling anything new.
+
+### 10. Target `IVRSystem_023`, not the `IVRSystem_026` in our own header
+
+`third_party/openvr` is OpenVR master. Neither Proton 10.0-4b's `vrclient` nor
+xrizer knows any `IVRSystem` past `_023`, so `"FnTable:IVRSystem_026"` returns
+**NULL** — measured. Worse, master's table is not a prefix of `_023`'s: master
+inserts `ComputeDistortionSet` at slot 4, so calling an `_023` table through
+master's struct would silently invoke the wrong slot from
+`GetEyeToHeadTransform` onwards. `experiments/04_live_fntable/ivrsystem_023.h`
+carries the correct layout, lifted from OpenVR v2.12.14.
+
+`IVRCompositor_029` is byte-identical between master and v2.12.14, so the
+compositor can keep using `openvr_capi.h`.
+
 ---
 
 ## Corrections to the original research
@@ -280,9 +340,20 @@ divergence exists, it exists in both APIs equally.
 What could not be checked: MSVC's side, because there is no MSVC toolchain on this
 machine. The claim "MSVC uses a hidden pointer with `ret 8`" is **unverified here**.
 
-The decision to use the C API still stands on its other merits (Decision 8), but
-if `GetHiddenAreaMesh` is ever needed, treat it as an unresolved ABI risk and
-verify it against the real runtime rather than assuming the C API made it safe.
+The decision to use the C API still stands on its other merits (Decision 8).
+
+**Update from Exp. 4 — measured against the real runtime.** By-value struct
+returns through the `FnTable` are fine in general: `GetProjectionMatrix`
+(64-byte) and `GetEyeToHeadTransform` (48-byte) both returned correct data from
+a 32-bit mingw DLL. `GetHiddenAreaMesh` specifically **kills the process**, but
+the fault is inside *Proton's own wow64 thunk* —
+`IVRSystem_IVRSystem_023_GetHiddenAreaMesh failed, status 0xc0000005`, asserted
+by Proton's generated wrapper with our frame still intact — and not a
+mingw-vs-MSVC divergence. `GetHiddenAreaMesh` is the one OpenVR method returning
+an 8-byte struct *containing a pointer* by value, which is exactly the shape
+whose wow64 conversion Proton mishandles. Treat the hidden-area mesh as
+**unavailable under new-WoW64** until Proton is fixed; the mingw/MSVC question
+remains untested because it is never reached.
 
 ### B. Proton 10.0-4b installs `openvr_api_dxvk.dll` into the wrong directories
 
@@ -319,6 +390,11 @@ contains the **64-bit** build, so the load fails.
 Workarounds: swap the two files in the prefix after it is created, ship a correct
 `openvr_api_dxvk.dll` next to `BlackOps.exe`, or use Proton Experimental.
 
+**Re-confirmed in Exp. 4** on a freshly created Proton 10.0-4b prefix:
+`system32` got the 631960-byte i386 build and `syswow64` the 836760-byte x86_64
+build. Exp. 4 does not depend on it — it loads Valve's own 32-bit
+`openvr_api.dll` from beside the exe — but a DXVK compositor submit will.
+
 ---
 
 ## Environment this was verified on
@@ -331,13 +407,15 @@ Workarounds: swap the two files in the prefix after it is created, ship a correc
 | Wine used for experiments | wine-11.0 (winehq-stable, `/opt/wine-stable`; `/usr/bin/wine` is a symlink to it) |
 | Wine prefix | fresh scratch `WINEARCH=win32` prefix, not `~/.wine` and not a Proton prefix |
 | Proton installed | 10.0-4b (`proton-10.0-4b`) — meets the 10.0-2 minimum |
-| OpenVR SDK | Valve `openvr` master, `IVRCompositor_029` / `IVRSystem_026` |
-| VR runtime | xrizer via the WiVRn flatpak, registered in `~/.config/openvr/openvrpaths.vrpath` |
+| OpenVR SDK | Valve `openvr` master (`IVRCompositor_029` / `IVRSystem_026`) — but see Decision 9: the chain caps at `IVRSystem_023` |
+| VR runtime | xrizer `be664bb` via the WiVRn flatpak, registered in `~/.config/openvr/openvrpaths.vrpath` |
+| OpenXR runtime | Monado 21.0.0 (`monado-service`), **Simulated HMD** — no VR hardware |
 
-**Both** Proton 10.0-4b and wine-11.0 ship a `lib/wine/i386-unix/` directory,
-i.e. they are **classic WoW64**, not new-WoW64. The experiments were run on
-classic WoW64; see `experiments/03_winedbg/RESULTS.md` for what that means for the
-new-WoW64 concern.
+Experiments 0–3 ran on wine-11.0 in classic WoW64 (both wine-11.0 and Proton
+10.0-4b ship a `lib/wine/i386-unix/`, so both *can* do classic WoW64); see
+`experiments/03_winedbg/RESULTS.md`. Experiment 4 deliberately runs on Proton's
+**new-WoW64** (`PROTON_USE_WOW64=1`, `files/bin-wow64/`) — see Decision 9, which
+is the single most important configuration decision in this repository.
 
 ---
 
@@ -360,6 +438,11 @@ experiments/
   01_openvr_capi/           OpenVR C API reachability + struct-return ABI
   02_cpp_exceptions/        exceptions across a DLL boundary, ±debugger
   03_winedbg/               winedbg and winedbg --gdb against 32-bit
+  04_live_fntable/          THE GATING EXPERIMENT: a live FnTable, called
+    run.sh                    one-command reproduction (stage, patch, build, run)
+    ivrsystem_023.h           the FnTable layout the chain actually speaks
+tools/
+  patch-proton-wow64-vrclient.py   works around two Proton wow64 vrclient bugs
 ```
 
 ## Logging
