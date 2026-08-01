@@ -1,0 +1,41 @@
+# Build output
+build/
+dist/*.dll
+dist/*.asi
+dist/*.a
+*.o
+*.d
+*.res
+*.lib
+*.exp
+
+# MinHook in-tree build artifacts (we build it from its own MinGW makefile)
+third_party/minhook/src/**/*.o
+third_party/minhook/src/**/*.d
+third_party/minhook/build/MinGW/*.a
+third_party/minhook/build/MinGW/*.dll
+
+# Experiment binaries (sources and RESULTS.md are tracked, outputs are not)
+experiments/**/*.exe
+experiments/**/*.dll
+experiments/**/*.a
+experiments/**/*.o
+experiments/**/*.log
+experiments/**/out/
+experiments/**/out-static/
+experiments/**/out-shared/
+experiments/**/out-noeh/
+
+# NOTE: third_party/openvr/{headers,bin/win32} ARE tracked on purpose.
+# openvr_api.dll (win32) is ~620K and the experiments are worthless without the
+# exact binary they were run against.
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Local, machine-specific toolchain overrides
+local.mk

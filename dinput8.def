@@ -1,0 +1,20 @@
+; dinput8.def -- export names for the ASI loader proxy.
+;
+; We export via a .def file rather than __declspec(dllexport) so the names land
+; in the export table exactly as the game's import table spells them, with no
+; stdcall @N decoration and no leading underscore. A proxy DLL that exports
+; "_DirectInput8Create@20" instead of "DirectInput8Create" will fail to satisfy
+; the game's import and the process dies at load time with no useful message.
+;
+; The five names below are the complete export set of the real dinput8.dll, as
+; confirmed against Proton 10.0-4b's own 32-bit build:
+;   files/lib/wine/i386-windows/dinput8.dll
+; (objdump -p, Ordinal/Name Pointer table -- exactly these five, ordinal base 1)
+
+LIBRARY dinput8
+EXPORTS
+    DirectInput8Create
+    DllCanUnloadNow
+    DllGetClassObject
+    DllRegisterServer
+    DllUnregisterServer
