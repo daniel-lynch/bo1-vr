@@ -107,6 +107,7 @@ struct eye_target {
     bo1vr_VkImage          image;
     bo1vr_VkEnum           layout;
     bo1vr_VkImageCreateInfo info;
+    IDirect3DQuery9        *q;      /* EVENT query: has our copy actually landed? */
 };
 
 static IDirect3DDevice9   *g_dev;
@@ -144,6 +145,8 @@ static int   g_fov_ok;
 static int   g_flat_logged;
 static LONG  g_flat_frames;
 static LONG  g_submit_fails;
+static LONG  g_gate_timeouts;
+static LONG  g_gate_max_spins;
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
@@ -338,6 +341,12 @@ static int interop_init(IDirect3DDevice9 *dev)
                  E->info.extent.width, E->info.extent.height, g_rw, g_rh);
             return 0;
         }
+        /* One event query per target. D3D9's event query completes when every
+         * command issued before it has been consumed by the GPU -- the D3D9
+         * expression of "the work is really submitted", which is what
+         * render-submit-sync-RE.md says must be verified rather than assumed. */
+        if (FAILED(IDirect3DDevice9_CreateQuery(dev, D3DQUERYTYPE_EVENT, &E->q)))
+            E->q = NULL;
         glog("eye %d: VkImage=0x%016llx layout=%d %ux%u fmt=%d", i,
              (unsigned long long)E->image, (int)E->layout,
              E->info.extent.width, E->info.extent.height,
@@ -353,6 +362,7 @@ static void release_eyes(void)
         struct eye_target *E = &g_eyes[i >> 1][i & 1];
         if (E->vktex) { E->vktex->lpVtbl->Release(E->vktex); }
         if (E->surf)  IDirect3DSurface9_Release(E->surf);
+        if (E->q)     IDirect3DQuery9_Release(E->q);
         if (E->tex)   IDirect3DTexture9_Release(E->tex);
         memset(E, 0, sizeof(*E));
     }
@@ -624,6 +634,10 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
     if (FAILED(hr)) {
         if (g_captured < 4) glog("capture eye %d StretchRect hr=0x%08lx", eye, (unsigned long)hr);
     } else {
+        /* Mark the copy. submit_eye waits on this before handing the texture
+         * to the compositor. */
+        if (g_eyes[eye][g_buf].q)
+            IDirect3DQuery9_Issue(g_eyes[eye][g_buf].q, D3DISSUE_END);
         InterlockedIncrement(&g_captured);
     }
     IDirect3DSurface9_Release(rt);
@@ -688,6 +702,32 @@ static void submit_eye(int i)
 
     /* Exactly the order Proton's own D3D11 path uses
      * (vrcompositor_manual.c load_compositor_texture_dxvk). */
+    /* GATE ON THE COPY HAVING LANDED.
+     *
+     * render-submit-sync-RE.md's finding, in its own setting: the shim released
+     * a swapchain image the app had not actually vkQueueSubmitted yet, and the
+     * compositor read an unwritten image. Its tell was vkQueueWaitIdle doing
+     * nothing -- there was no queued work to drain -- and the failure was
+     * load-gated. FlushRenderingCommands is the same kind of assumption: it
+     * asks DXVK to flush, it does not establish that our StretchRect has been
+     * consumed.
+     *
+     * A D3D9 EVENT query does establish it. GetData with D3DGETDATA_FLUSH
+     * returns S_FALSE until every command issued before the query has been
+     * consumed by the GPU.
+     *
+     * BOUNDED, deliberately. An unbounded wait here would be a new hang in a
+     * codebase that has already produced several. If the budget expires we
+     * submit anyway and count it: a stale frame is a far better failure than a
+     * frozen game, and the counter turns "is this the race?" into a number. */
+    if (E->q) {
+        int spins = 0;
+        while (IDirect3DQuery9_GetData(E->q, NULL, 0, D3DGETDATA_FLUSH) == S_FALSE) {
+            if (++spins > 200000) { g_gate_timeouts++; break; }
+        }
+        if (spins > g_gate_max_spins) g_gate_max_spins = spins;
+    }
+
     if (!g_notrans)
         g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
                                                  E->layout,
@@ -943,9 +983,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld submits, %ld ticks, %ld flat (%ld%%), %ld skipped",
-             n, g_submitted, g_pose_ticks, g_flat_frames,
-             n ? (g_flat_frames * 100) / n : 0, g_skipped);
+        glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts",
+             n, g_submitted, g_pose_ticks, g_flat_frames, g_skipped,
+             g_gate_max_spins, g_gate_timeouts);
 }
 
 /* ------------------------------------------------------------------ hooks */
