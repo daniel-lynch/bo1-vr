@@ -226,3 +226,49 @@ Makefile           `make`, `make install` (-> C:\bo1vr in the prefix)
 path: the bare name would find the game install (untouched) or the system
 directories, where only Proton's `openvr_api_dxvk.dll` lives — a different DLL
 that does no interop at all.
+
+---
+
+## 7. The freeze: where it stands
+
+Single-threading the OpenVR calls was a large, measurable improvement, not a
+guess that failed:
+
+| | frames before freeze | xrizer panic |
+|---|---|---|
+| WaitGetPoses on a pose thread | ~2 | yes, repeatedly |
+| both on the render thread | **399** | **none** |
+
+Still freezes eventually, and the watchdog is consistent about how:
+
+```
+WATCHDOG: no frame for 150 s, stuck at stage 0 (idle), pose ticks 399
+```
+
+**Stage 0 means our code is not running.** We complete a frame, return, and the
+game's own render loop never calls Present again. The compositor is healthy and
+xrizer did not crash. So we do not hang — we leave the game's renderer wedged.
+
+### The lead, from `~/dev/re4vr-research-private/render-submit-sync-RE.md`
+
+That document reverse-engineers the same class of bug in a VrApi→OpenXR shim:
+the app's eye render has **not yet been `vkQueueSubmit`ed** when the shim
+resolves and releases the swapchain image, so the compositor reads an unwritten
+image. Its measured tell was that `vkQueueWaitIdle` had *no effect* — there was
+nothing queued to drain — and it was load-gated, appearing only in dense scenes.
+
+Ours is the mirror image: we submit on the queue DXVK owns, holding DXVK's
+submission-queue lock, while the game's renderer wants that queue. Removing the
+lock made it worse (we wedged in our own `StretchRect`), which says the lock is
+load-bearing rather than incidental.
+
+Its recommendation translates directly: **gate on having seen the game's own
+submit** rather than assuming `FlushRenderingCommands` has drained it, keep the
+same-queue ordering as the in-place mechanism (its Option C), and hold the
+one-frame deferred release only as a fallback — it reports that option as
+crash-prone in practice.
+
+### Escape hatch
+
+`novr.on` in `C:\bo1vr` disables submission entirely; the game is then stable
+with every hook, the dual-view render and the per-eye camera still active.
