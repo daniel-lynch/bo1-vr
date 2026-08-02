@@ -272,3 +272,33 @@ crash-prone in practice.
 
 `novr.on` in `C:\bo1vr` disables submission entirely; the game is then stable
 with every hook, the dual-view render and the per-eye camera still active.
+
+### 7b. The submit race is CONFIRMED, and it is not the freeze
+
+```
+frame 2: 4 submits, ..., gate max 161978 spins, 0 timeouts
+```
+
+**161,978 spins.** Our `StretchRect` was demonstrably not complete when we handed
+the texture to the compositor — `FlushRenderingCommands` was not draining it,
+exactly as `render-submit-sync-RE.md` predicted for its own case. We were
+submitting **unwritten textures on every frame**, which is almost certainly what
+the flashing was. The gate closes it with zero timeouts.
+
+**And the freeze is unaffected.** Same signature: stage 0, our code idle,
+compositor healthy, no panic, the game's render loop stopping (343 frames this
+run against 399 before).
+
+So these are **two different faults**, and this run separated them. That is
+worth more than a fix would have been, because every earlier attempt was
+conflating them — which is why each one appeared to half-work.
+
+It also revalidates an experiment that was previously spoiled. When `nolock.on`
+was first tried, removing the queue lock made us wedge inside our own
+`StretchRect` — but the copy was not complete at that point, so **that failure
+was the race, not the lock**. With the gate guaranteeing completion, the nolock
+run is now a clean measurement of the lock alone.
+
+**Known cost to revisit:** 161,978 spins is a busy-wait burning a core for
+milliseconds, which is bad for frametime and wants a yield. Left as-is so the
+next run changes one variable rather than two.
