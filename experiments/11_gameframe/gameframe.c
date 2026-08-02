@@ -147,6 +147,20 @@ static int vr_init(void)
     EVRInitError err;
     intptr_t iface;
 
+    /* KILL SWITCH. Drop a file named novr.on next to the plugins and we do not
+     * touch the compositor at all -- the hooks still load and the game still
+     * renders normally to the monitor.
+     *
+     * This is the discriminating test for "is the freeze even ours": if it
+     * still freezes with this file present, the cause is not our submission
+     * path, and every hypothesis about Submit, the frame pairing and DXVK's
+     * queue lock is wrong. It also means a bad build never leaves the game
+     * unplayable -- no rebuild, no uninstall, just a file. */
+    if (GetFileAttributesA("C:\\bo1vr\\novr.on") != INVALID_FILE_ATTRIBUTES) {
+        glog("novr.on present -- VR submission DISABLED, game runs flat");
+        return 0;
+    }
+
     /* C:\bo1vr first. The bare name would be searched in the exe's directory --
      * the game install, which stays untouched (Exp. 9) -- and then the system
      * directories, where only Proton's openvr_api_DXVK.dll lives, which is a
@@ -398,6 +412,43 @@ static DWORD WINAPI pose_thread(LPVOID p)
     return 0;
 }
 
+/* WHERE IS THE RENDER THREAD RIGHT NOW?
+ *
+ * Three freezes in a row have been diagnosed after the fact from thread states
+ * and third-party logs, which is slow and has produced one wrong guess already.
+ * g_stage is set as the render thread moves through the frame, and a watchdog
+ * thread prints it if the frame counter stops advancing. A freeze then names
+ * its own location in our log instead of needing /proc archaeology.
+ *
+ * The prime suspect this exists to confirm or kill: submit_eye holds DXVK's
+ * SUBMISSION QUEUE LOCK across IVRCompositor::Submit. If Submit blocks -- and
+ * it can, because xrizer acquires and waits on a swapchain image inside it --
+ * then every DXVK thread that needs to submit blocks behind us, which would
+ * freeze the game exactly like this. Stage 3/4 stuck would confirm it. */
+static volatile LONG g_stage;      /* 0 idle 1 capture/resolve 2 pre-submit
+                                      3 in Submit eye0 4 in Submit eye1
+                                      5 PostPresentHandoff */
+static volatile LONG g_watch_frame;
+
+static DWORD WINAPI watchdog_thread(LPVOID p)
+{
+    LONG last = -1, same = 0;
+    (void)p;
+    for (;;) {
+        Sleep(1000);
+        if (g_watch_frame == last) {
+            if (++same == 3 || same == 10 || (same % 30) == 0)
+                glog("WATCHDOG: no frame for %ld s, stuck at stage %ld "
+                     "(1=capture 2=pre-submit 3=Submit-eye0 4=Submit-eye1 5=handoff), "
+                     "pose ticks %ld", same, g_stage, g_pose_ticks);
+        } else {
+            last = g_watch_frame;
+            same = 0;
+        }
+    }
+    return 0;
+}
+
 static void start_pose_thread(void)
 {
     DWORD tid;
@@ -410,6 +461,7 @@ static void start_pose_thread(void)
      * warns about. */
     g_pose_thread = CreateThread(NULL, 0, pose_thread, NULL, 0, &tid);
     if (!g_pose_thread) glog("CreateThread for poses failed (err=%lu)", GetLastError());
+    CreateThread(NULL, 0, watchdog_thread, NULL, 0, &tid);
 }
 
 /* --------------------------------------------------- dual-view capture */
@@ -654,6 +706,8 @@ static void do_frame(IDirect3DSwapChain9 *sc)
     }
 
     n = InterlockedIncrement(&g_frames);
+    g_watch_frame = n;
+    g_stage = 1;
 
     /* DO NOT CALL WaitGetPoses HERE.
      *
@@ -768,11 +822,16 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         return;
     }
 
-    for (i = 0; i < 2; i++)
+    g_stage = 2;
+    for (i = 0; i < 2; i++) {
+        g_stage = 3 + i;
         submit_eye(i);
+    }
 
+    g_stage = 5;
     g_comp->PostPresentHandoff();
     SetEvent(g_ev_consumed);
+    g_stage = 0;
     IDirect3DSurface9_Release(bb);
 
     /* Flip, and tell camera.asi which eye the NEXT frame belongs to. The eye
