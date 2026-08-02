@@ -127,6 +127,7 @@ static float g_fov[2][2];           /* what the GAME should render (crop-compens
 static float g_fov_hmd[2][2];       /* what the HEADSET actually wants */
 static int   g_fov_ok;
 static int   g_flat_logged;
+static LONG  g_flat_frames;
 static LONG  g_submit_fails;
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
@@ -695,7 +696,19 @@ static void do_frame(IDirect3DSwapChain9 *sc)
                                               D3DTEXF_LINEAR);
             if (FAILED(hr)) break;
         }
-        if (!g_flat_logged) { glog("no scene this frame (2D/loading) -- both eyes mono"); g_flat_logged = 1; }
+        /* COUNT these, do not just log the first.
+         *
+         * Two different things could make the image flash, and the RATIO tells
+         * them apart:
+         *   - if flat frames are roughly half, we are alternating between the
+         *     cropped stereo path and this full-frame mono one, and the flash
+         *     is the aspect and content changing every other frame;
+         *   - if flat frames are rare, the flash is something else -- most
+         *     likely the compositor still reading an eye texture while the next
+         *     frame overwrites it, which wants double-buffered eye targets.
+         * Guessing between those two costs a playtest each. Counting costs
+         * nothing. */
+        g_flat_frames++;
     } else {
         hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
                                           D3DTEXF_LINEAR);
@@ -733,7 +746,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld successful eye submits, %ld pose ticks", n, g_submitted, g_pose_ticks);
+        glog("frame %ld: %ld eye submits, %ld pose ticks, %ld flat frames (%ld%%)",
+             n, g_submitted, g_pose_ticks, g_flat_frames,
+             n ? (g_flat_frames * 100) / n : 0);
 }
 
 /* ------------------------------------------------------------------ hooks */
