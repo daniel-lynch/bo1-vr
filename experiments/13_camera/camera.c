@@ -421,11 +421,29 @@ static void __cdecl hk_R_RenderScene(void *refdef)
      * high-water mark so the guess becomes a number. */
     if (g_base) {
         unsigned char *fed = *(unsigned char **)(g_base + (VA_FRONTENDDATA - PREFERRED_BASE));
+        /* Report the FIRST reading unconditionally, whatever it is.
+         *
+         * The first version of this watch logged only when a plausible value
+         * ROSE, and after a crash it had produced no lines at all -- which is
+         * useless, because "the counter never grew", "the pointer was null" and
+         * "the address is wrong so the value was garbage" all look identical
+         * from outside. An instrument that is silent when it fails teaches
+         * nothing. */
+        static int reported;
+        if (!reported) {
+            reported = 1;
+            if (!fed)
+                camlog("slot watch: frontEndData is NULL at %p", 
+                       (void *)(g_base + (VA_FRONTENDDATA - PREFERRED_BASE)));
+            else
+                camlog("slot watch: frontEndData=%p viewParmsCount=%u (raw, after 2 renders)",
+                       (void *)fed, *(unsigned *)(fed + FED_VIEWPARMSCOUNT));
+        }
         if (fed) {
             unsigned c = *(unsigned *)(fed + FED_VIEWPARMSCOUNT);
-            if (c > g_max_slots && c < 4096) {
+            if (c > g_max_slots) {
                 g_max_slots = c;
-                camlog("view-parms high-water mark: %u slots (pool end unknown -- plan 5.1)", c);
+                camlog("view-parms high-water mark: %u slots", c);
             }
         }
     }
