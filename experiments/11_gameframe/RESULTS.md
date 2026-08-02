@@ -302,3 +302,25 @@ run is now a clean measurement of the lock alone.
 **Known cost to revisit:** 161,978 spins is a busy-wait burning a core for
 milliseconds, which is bad for frametime and wants a yield. Left as-is so the
 next run changes one variable rather than two.
+
+### 7c. The queue lock is not the cause either
+
+`nolock.on` with the gate in place — the clean measurement that was impossible
+before — still froze: stage 0, 68 pose ticks, no panic, gate max 137,544 spins
+with 0 timeouts.
+
+So DXVK's submission queue lock is **not** what wedges the game's renderer. That
+was the last specific hypothesis standing, and it is now dead. Restoring the
+lock, since it is needed (removing it alone made things worse) and is not the
+culprit.
+
+**What is left, and the order to test it:**
+
+| Switch | Question it answers |
+|---|---|
+| `nosubmit.on` | Does the freeze survive with **no `Submit` call at all**? If yes, nothing we hand the compositor matters and the fault is in the interop setup itself — creating the shared VkImages, holding `ID3D9VkInteropDevice`, or the queries — not in the handoff. If no, it is `Submit` and only `Submit`. |
+| `notrans.on` | Whether the image layout transitions are implicated. |
+
+`nosubmit.on` is the decisive one and is enabled next. Everything to date has
+assumed the fault is in the frame handoff; that assumption has never actually
+been tested, and this tests it in one run.
