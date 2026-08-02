@@ -44,6 +44,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #include "openvr_capi.h"
 #include "ivrsystem_023.h"
@@ -122,6 +123,9 @@ static LONG g_frames;
 static LONG g_submitted;
 static int  g_cur_eye;              /* AER fallback: which eye THIS frame is */
 static int  g_dual;                 /* 1 once camera.asi supplies both eyes */
+static float g_fov[2][2];           /* per-eye tanHalfFov {x,y} from the HMD */
+static int   g_fov_ok;
+static int   g_flat_logged;
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
@@ -205,6 +209,39 @@ static int vr_init(void)
     g_sys = (struct IVRSystem_023_FnTable *)iface;
     if (g_sys) g_sys->GetRecommendedRenderTargetSize(&g_rw, &g_rh);
     if (!g_rw || !g_rh) { g_rw = 896; g_rh = 1007; glog("no recommended size; using %ux%u", g_rw, g_rh); }
+
+    /* THE HEADSET'S FIELD OF VIEW, not the game's.
+     *
+     * The game runs a ~60 degree vertical FOV (exp 13 measured tanHalfFovY =
+     * 0.57735 = tan(30deg)). A headset wants roughly double that, and rendering
+     * the narrow one into a wide display is exactly what "super zoomed in"
+     * looks like -- the world appears magnified and head movement feels wrong
+     * because the angular scale is off.
+     *
+     * GetProjectionRaw returns the four TANGENTS of the eye frustum, which is
+     * precisely what refdef's tanHalfFov fields want. The eye frustum is
+     * asymmetric (l and r differ in magnitude), and the honest fix is a sheared
+     * projection matrix -- camera-hook-plan 4.2. Here we take the half-width
+     * and half-height instead and let the ENGINE build its own symmetric
+     * matrix from them: it is one assignment rather than a hand-built matrix
+     * with a handedness convention to get wrong, it cannot desync from whatever
+     * else the engine does to the projection, and it fixes the magnification,
+     * which is the part that actually hurts. The residual asymmetry is a small
+     * off-centre error, not a scale error. */
+    if (g_sys) {
+        int e;
+        for (e = 0; e < 2; e++) {
+            float l = 0, r = 0, t = 0, b = 0;
+            g_sys->GetProjectionRaw((EVREye)e, &l, &r, &t, &b);
+            /* Tangents; t/b come back negative-up in OpenVR's convention, so
+             * use magnitudes and average the two sides. */
+            g_fov[e][0] = (float)((fabs((double)l) + fabs((double)r)) * 0.5);
+            g_fov[e][1] = (float)((fabs((double)t) + fabs((double)b)) * 0.5);
+            glog("eye %d projection raw l=%.4f r=%.4f t=%.4f b=%.4f -> tanHalfFov %.4f %.4f",
+                 e, l, r, t, b, g_fov[e][0], g_fov[e][1]);
+            if (g_fov[e][0] > 0.05f && g_fov[e][1] > 0.05f) g_fov_ok = 1;
+        }
+    }
 
     glog("OpenVR up: compositor=%p system=%p per-eye %ux%u", (void *)g_comp, (void *)g_sys, g_rw, g_rh);
     return 1;
@@ -333,6 +370,15 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
     IDirect3DSurface9_Release(rt);
 }
 
+/* Per-eye tanHalfFov for camera.asi. Returns 0 until OpenVR is up. */
+__declspec(dllexport) int bo1vr_get_eye_fov(int eye, float *tanx, float *tany)
+{
+    if (!g_fov_ok || eye < 0 || eye > 1 || !tanx || !tany) return 0;
+    *tanx = g_fov[eye][0];
+    *tany = g_fov[eye][1];
+    return 1;
+}
+
 /* ------------------------------------------------------------ per-frame */
 
 static void submit_eye(int i)
@@ -451,6 +497,26 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * are different eyes. That twitch is what dual view removes. */
     if (InterlockedExchange(&g_captured, 0) >= 2) {
         if (!g_dual) { glog("DUAL VIEW live: both eyes rendered per frame"); g_dual = 1; }
+    } else if (g_dual) {
+        /* DUAL VIEW IS LIVE BUT THIS FRAME HAD NO SCENE.
+         *
+         * Loading screens, the pause menu and anything else 2D never call
+         * R_RenderScene, so nothing captured. Submitting the eye textures
+         * unchanged would send whatever each eye last held -- and because the
+         * two were captured at different moments, they can be from different
+         * places entirely. That is the "eyes get out of sync on a loadscreen"
+         * that showed up in play.
+         *
+         * Resolve the finished frame into BOTH eyes instead: a 2D screen has no
+         * parallax to lose, so mono is not a compromise here, it is correct.
+         * (A proper floating screen in world space is the eventual answer for
+         * menus; this at least makes them coherent.) */
+        for (i = 0; i < 2; i++) {
+            hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i].surf, NULL,
+                                              D3DTEXF_LINEAR);
+            if (FAILED(hr)) break;
+        }
+        if (!g_flat_logged) { glog("no scene this frame (2D/loading) -- both eyes mono"); g_flat_logged = 1; }
     } else {
         hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
                                           D3DTEXF_LINEAR);

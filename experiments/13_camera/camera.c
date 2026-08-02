@@ -47,6 +47,11 @@
 #define PREFERRED_BASE   0x400000u
 #define VA_R_SetViewParms 0x6C7F80u
 #define VA_R_RenderScene  0x6C8C40u
+/* frontEndData pointer, and the bump-allocated view-parms counter inside it.
+ * camera-hook-plan 5.1 names slot exhaustion the HIGHEST risk of rendering the
+ * scene twice, and gives exactly this as the test. */
+#define VA_FRONTENDDATA   0x3B3708Cu
+#define FED_VIEWPARMSCOUNT 0x16CBE0u
 
 /* refdef_t (base = cg + 0x8C100) */
 #define RD_TANHALFFOVX   0x10
@@ -197,6 +202,9 @@ static void check_axis(const char *what, const float *m)
  * property of the frame, not of this hook. -1 means "leave the camera alone",
  * which is the state during menus and any frame we are not driving. */
 static volatile LONG g_eye = -1;
+static int  (*g_get_fov)(int, float *, float *);   /* gameframe.asi's bo1vr_get_eye_fov */
+static unsigned char *g_base;                      /* image base, for the slot watch */
+static unsigned g_max_slots;
 static float         g_ipd_units = 2.6f;   /* see below */
 
 /* Exported so gameframe.asi can drive us without either of us owning the other.
@@ -228,8 +236,8 @@ void __cdecl hk_body(void *out, void *in)
     LONG n = InterlockedIncrement(&g_calls);
     LONG eye = g_eye;
     unsigned char *rd = (unsigned char *)in;
-    float save_org[3];
-    int   moved = 0;
+    float save_org[3], save_fov[2];
+    int   moved = 0, fov_set = 0;
 
     /* Shift the camera sideways by half an IPD along the view's own LEFT axis
      * (refdef axis row 1 -- measured as `left`, not `right`, in
@@ -250,6 +258,22 @@ void __cdecl hk_body(void *out, void *in)
         org[1] += left[1] * half;
         org[2] += left[2] * half;
         moved = 1;
+
+        /* AND THE FIELD OF VIEW. The game renders ~60 degrees vertical; a
+         * headset wants roughly double, and feeding the narrow FOV to a wide
+         * display is what "super zoomed in" is. Setting the refdef tangents
+         * lets the engine build its own projection from them, rather than us
+         * hand-building a matrix and having to get its handedness right. */
+        if (g_get_fov) {
+            float tx, ty;
+            if (g_get_fov((int)eye, &tx, &ty)) {
+                float *fx = (float *)(rd + RD_TANHALFFOVX);
+                float *fy = (float *)(rd + RD_TANHALFFOVY);
+                save_fov[0] = *fx; save_fov[1] = *fy;
+                *fx = tx; *fy = ty;
+                fov_set = 1;
+            }
+        }
     }
 
     /* Read BEFORE calling the original: `in` is the live refdef and the original
@@ -286,6 +310,10 @@ void __cdecl hk_body(void *out, void *in)
      * where the camera is -- not just the picture. */
     if (moved)
         memcpy(rd + RD_VIEWORG, save_org, sizeof save_org);
+    if (fov_set) {
+        *(float *)(rd + RD_TANHALFFOVX) = save_fov[0];
+        *(float *)(rd + RD_TANHALFFOVY) = save_fov[1];
+    }
 
     /* Now cross-check the OUTPUT. R_SetViewParms copies the origin across, so
      * agreement here means the refdef offsets, the GfxViewParms offsets and the
@@ -367,7 +395,10 @@ static void __cdecl hk_R_RenderScene(void *refdef)
             o_R_RenderScene(refdef);
             return;
         }
-        camlog("dual view: capture entry resolved -- two renders per frame");
+        g_get_fov = (int (*)(int, float *, float *))
+                    GetProcAddress(GetModuleHandleA("gameframe.asi"), "bo1vr_get_eye_fov");
+        camlog("dual view: capture entry resolved -- two renders per frame%s",
+               g_get_fov ? "; HMD FOV available" : "; NO HMD FOV (still game FOV)");
     }
 
     bo1vr_camera_set_eye(0);
@@ -381,6 +412,23 @@ static void __cdecl hk_R_RenderScene(void *refdef)
     /* Back to "not ours", so any later view this frame -- and the next frame up
      * to its own R_RenderScene -- is left completely alone. */
     bo1vr_camera_set_eye(-1);
+
+    /* SLOT WATCH. camera-hook-plan 5.1: the view-parms slot is bump-allocated
+     * with no visible bound check, and rendering the scene twice doubles the
+     * consumption. If the pool is smaller than we now need, the overrun writes
+     * past frontEndData+0x88000 into whatever lives after it -- which would
+     * show up exactly as this does: fine for a while, then a crash. Log the
+     * high-water mark so the guess becomes a number. */
+    if (g_base) {
+        unsigned char *fed = *(unsigned char **)(g_base + (VA_FRONTENDDATA - PREFERRED_BASE));
+        if (fed) {
+            unsigned c = *(unsigned *)(fed + FED_VIEWPARMSCOUNT);
+            if (c > g_max_slots && c < 4096) {
+                g_max_slots = c;
+                camlog("view-parms high-water mark: %u slots (pool end unknown -- plan 5.1)", c);
+            }
+        }
+    }
 }
 
 static DWORD WINAPI init(LPVOID p)
@@ -391,6 +439,7 @@ static DWORD WINAPI init(LPVOID p)
 
     (void)p;
     if (!base) { camlog("no module base"); return 0; }
+    g_base = base;
     /* Relative to the preferred base, so a relocated image still resolves. */
     target = base + (VA_R_SetViewParms - PREFERRED_BASE);
     camlog("module base %p -> R_SetViewParms %p", (void *)base, target);
