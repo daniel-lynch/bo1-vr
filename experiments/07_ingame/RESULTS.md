@@ -576,7 +576,9 @@ not available once DXVK, steamclient and 60-odd DLLs are mapped.
 before this point — `dx->device` is live, the dvar system is fully populated
 (1970 dvars), and `.text` is intact — but a camera hook that wants to run for
 more than ~10 s, or wants an actual rendered frame on screen, will have to get
-past this first. Diagnosing it is its own task, and it is **not** a CEG,
+past this first. Diagnosing it is its own task -- done in
+`experiments/08_launch/`, which traces it to a deliberate Steam-DRM
+`ExitProcess(0)` rather than a fault -- and it is **not** a CEG,
 anti-debug, or loader problem: it reproduces with a stock executable and no mod
 loaded.
 
@@ -657,7 +659,13 @@ without the debugger; `out/gdb-session.txt` is from a run with it.
 
 * **The main menu, and anything rendered.** The game exits during frontend zone
   load (§8), with or without our loader. No game window was captured.
-* **Why it exits.** Characterised and shown not to be ours; not diagnosed.
+* **Why it exits.** Characterised and shown not to be ours; not diagnosed here.
+  **Since answered by `experiments/08_launch/`**, which corroborates the
+  control above (stock mirror, no mod, 8/8 configurations) and finds it is not
+  a crash at all: the game calls `ExitProcess(0)` deliberately from a stub that
+  pushes `0x8000DEAD` and opens the `STEAM_DRM_IPC` semaphores. Consistent with
+  what is measured here -- exit code 0, no exception, no message. It still does
+  not reach the main menu.
 * **Long-lived hooks.** Nothing here installs a MinHook detour on a game
   function. `MH_Initialize` returns `MH_OK` inside the game, which is as far as
   this experiment takes it.
