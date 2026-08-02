@@ -123,7 +123,8 @@ static LONG g_frames;
 static LONG g_submitted;
 static int  g_cur_eye;              /* AER fallback: which eye THIS frame is */
 static int  g_dual;                 /* 1 once camera.asi supplies both eyes */
-static float g_fov[2][2];           /* per-eye tanHalfFov {x,y} from the HMD */
+static float g_fov[2][2];           /* what the GAME should render (crop-compensated) */
+static float g_fov_hmd[2][2];       /* what the HEADSET actually wants */
 static int   g_fov_ok;
 static int   g_flat_logged;
 static LONG  g_submit_fails;
@@ -236,11 +237,13 @@ static int vr_init(void)
             g_sys->GetProjectionRaw((EVREye)e, &l, &r, &t, &b);
             /* Tangents; t/b come back negative-up in OpenVR's convention, so
              * use magnitudes and average the two sides. */
-            g_fov[e][0] = (float)((fabs((double)l) + fabs((double)r)) * 0.5);
-            g_fov[e][1] = (float)((fabs((double)t) + fabs((double)b)) * 0.5);
+            g_fov_hmd[e][0] = (float)((fabs((double)l) + fabs((double)r)) * 0.5);
+            g_fov_hmd[e][1] = (float)((fabs((double)t) + fabs((double)b)) * 0.5);
+            g_fov[e][0] = g_fov_hmd[e][0];   /* until setup_crop widens them */
+            g_fov[e][1] = g_fov_hmd[e][1];
             glog("eye %d projection raw l=%.4f r=%.4f t=%.4f b=%.4f -> tanHalfFov %.4f %.4f",
-                 e, l, r, t, b, g_fov[e][0], g_fov[e][1]);
-            if (g_fov[e][0] > 0.05f && g_fov[e][1] > 0.05f) g_fov_ok = 1;
+                 e, l, r, t, b, g_fov_hmd[e][0], g_fov_hmd[e][1]);
+            if (g_fov_hmd[e][0] > 0.05f && g_fov_hmd[e][1] > 0.05f) g_fov_ok = 1;
         }
     }
 
@@ -327,6 +330,64 @@ static void release_eyes(void)
 
 static LONG g_captured;      /* eyes captured during THIS frame by camera.asi */
 static int  g_rt_logged;
+static RECT g_crop;
+static int  g_have_crop;
+
+/* THE ASPECT FIX.
+ *
+ * The game renders 2560x1440 (1.778, landscape). The per-eye target is
+ * 1832x2015 (0.909, portrait). Copying one into the other full-frame is a 1.96x
+ * NON-UNIFORM squeeze -- circles become ellipses, and it reads as "still a bit
+ * zoomed in" even after the field of view itself was corrected.
+ *
+ * The fix is to take a centred sub-rectangle of the source whose aspect already
+ * matches the eye, so the copy is a UNIFORM scale, and to widen the FOV we ask
+ * the game to render by exactly the amount the crop throws away. The player
+ * then sees the headset's true field of view with correct geometry.
+ *
+ * Worked for this case: crop height 1440 (all of it), width 1440 * 0.909 = 1309
+ * of 2560. We keep 51% of the width, so the game must render 1/0.51 = 1.96x
+ * wider horizontally for the visible part to come out at the headset's FOV.
+ *
+ * WHY NOT RENDER STRAIGHT INTO THE EYE TARGET, which wastes nothing? Because
+ * D3D9 requires the depth-stencil surface to be at least as large as the render
+ * target, and the eye is 2015 tall against the game's 1440 depth buffer -- so
+ * it needs our own depth surface, which must also match multisample type, which
+ * means dropping the game's 4x MSAA and hoping the engine does not rebind its
+ * own targets mid-scene. That is a much bigger change with several ways to fail
+ * silently. This one is arithmetic. */
+static void setup_crop(UINT sw, UINT sh)
+{
+    double eye_aspect, cw, ch;
+
+    if (!sw || !sh || !g_rw || !g_rh) return;
+    eye_aspect = (double)g_rw / (double)g_rh;
+
+    ch = (double)sh;
+    cw = ch * eye_aspect;
+    if (cw > (double)sw) { cw = (double)sw; ch = cw / eye_aspect; }
+
+    g_crop.left   = (LONG)((sw - cw) * 0.5);
+    g_crop.top    = (LONG)((sh - ch) * 0.5);
+    g_crop.right  = g_crop.left + (LONG)cw;
+    g_crop.bottom = g_crop.top  + (LONG)ch;
+    g_have_crop   = 1;
+
+    /* Widen the render FOV by exactly what the crop discards, so the visible
+     * part subtends the headset's angles. */
+    if (g_fov_ok) {
+        int e;
+        for (e = 0; e < 2; e++) {
+            g_fov[e][0] = g_fov_hmd[e][0] * (float)((double)sw / cw);
+            g_fov[e][1] = g_fov_hmd[e][1] * (float)((double)sh / ch);
+        }
+        glog("crop %ldx%ld at (%ld,%ld) of %ux%u -> render tanHalfFov %.4f %.4f "
+             "(headset %.4f %.4f)",
+             g_crop.right - g_crop.left, g_crop.bottom - g_crop.top,
+             g_crop.left, g_crop.top, sw, sh,
+             g_fov[0][0], g_fov[0][1], g_fov_hmd[0][0], g_fov_hmd[0][1]);
+    }
+}
 
 /* Called by camera.asi immediately after each of its two R_RenderScene calls.
  *
@@ -355,14 +416,18 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
 
     if (!g_rt_logged) {
         D3DSURFACE_DESC d;
-        if (SUCCEEDED(IDirect3DSurface9_GetDesc(rt, &d)))
+        if (SUCCEEDED(IDirect3DSurface9_GetDesc(rt, &d))) {
             glog("scene render target %ux%u fmt=%d MULTISAMPLE=%d pool=%d usage=0x%lx",
                  d.Width, d.Height, (int)d.Format, (int)d.MultiSampleType,
                  (int)d.Pool, (unsigned long)d.Usage);
+            setup_crop(d.Width, d.Height);
+        }
         g_rt_logged = 1;
     }
 
-    hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
+    /* CROP, DO NOT STRETCH. See setup_crop. */
+    hr = IDirect3DDevice9_StretchRect(g_dev, rt, g_have_crop ? &g_crop : NULL,
+                                      g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
     if (FAILED(hr)) {
         if (g_captured < 4) glog("capture eye %d StretchRect hr=0x%08lx", eye, (unsigned long)hr);
     } else {
