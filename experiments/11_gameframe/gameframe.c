@@ -126,6 +126,7 @@ static int  g_dual;                 /* 1 once camera.asi supplies both eyes */
 static float g_fov[2][2];           /* per-eye tanHalfFov {x,y} from the HMD */
 static int   g_fov_ok;
 static int   g_flat_logged;
+static LONG  g_submit_fails;
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
@@ -429,8 +430,18 @@ static void submit_eye(int i)
                                              BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                              g_eyes[i].layout);
 
-    if (ce == EVRCompositorError_VRCompositorError_None)
+    if (ce == EVRCompositorError_VRCompositorError_None) {
         InterlockedIncrement(&g_submitted);
+        g_submit_fails = 0;
+    } else if (++g_submit_fails > 240) {
+        /* The compositor has rejected everything for ~2 seconds. It is gone or
+         * has taken focus away. Stop submitting rather than hammering it every
+         * frame forever -- the game keeps running and rendering to the monitor,
+         * which is the correct thing to degrade to. */
+        glog("compositor rejected %ld consecutive submits (last %d) -- standing down",
+             g_submit_fails, (int)ce);
+        g_state = -1;
+    }
     else if (g_frames < 3 || (g_frames % 600) == 0)
         glog("frame %ld eye %d: Submit -> %d", g_frames, i, (int)ce);
 }
@@ -457,11 +468,32 @@ static void do_frame(IDirect3DSwapChain9 *sc)
 
     n = InterlockedIncrement(&g_frames);
 
-    /* The compositor's frame clock. This blocks until the runtime wants the
-     * next frame, which is the point -- it is what makes our submissions land
-     * in step with the headset rather than at whatever rate the game feels
-     * like. It also means the game's frame rate is now the HEADSET's. */
-    g_comp->WaitGetPoses(rposes, 64, gposes, 64);
+    /* DO NOT CALL WaitGetPoses HERE.
+     *
+     * This used to. It is the conventional VR frame clock -- it blocks until
+     * the runtime wants the next frame -- and blocking the GAME'S RENDER THREAD
+     * on an external process is how the game hangs.
+     *
+     * Measured, from a real session: monado logged "Frame late by 1016ms",
+     * then 1033, then 1050, then 1066 -- climbing by exactly one 60 Hz frame
+     * period each time -- followed by "Session is visible but not active" and
+     * END_SESSION. The compositor session went away; WaitGetPoses never
+     * returned; the game's main thread parked in futex_wait_multiple with every
+     * DXVK thread idle, while the audio thread carried on playing. That is
+     * precisely the "not responding but I can hear the background audio"
+     * report, and it is a deadlock we introduced.
+     *
+     * GetLastPoses is the non-blocking read of the same data, which is what the
+     * head tracking will want, and Submit is happy without the wait. The cost
+     * is that we no longer sync to the headset's cadence, so the compositor
+     * reprojects instead -- a far better failure mode than freezing the game.
+     * It also undoes the "the game's frame rate becomes the headset's"
+     * consequence noted earlier.
+     *
+     * If a real frame clock is wanted later it belongs on a thread of OUR own,
+     * never on a thread the game owns. */
+    if (g_comp->GetLastPoses)
+        g_comp->GetLastPoses(rposes, 64, gposes, 64);
 
     hr = IDirect3DSwapChain9_GetBackBuffer(sc, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
     if (FAILED(hr) || !bb) {
