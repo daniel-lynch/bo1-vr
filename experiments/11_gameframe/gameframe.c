@@ -476,8 +476,11 @@ static void start_pose_thread(void)
     /* Started from the render thread at first frame, never from DllMain:
      * creating a thread under the loader lock is the deadlock src/dllmain.c
      * warns about. */
-    g_pose_thread = CreateThread(NULL, 0, pose_thread, NULL, 0, &tid);
-    if (!g_pose_thread) glog("CreateThread for poses failed (err=%lu)", GetLastError());
+    /* The pose thread is gone: WaitGetPoses now runs on the render thread with
+     * Submit, because splitting them across threads is what xrizer could not
+     * survive. Kept as dead code rather than deleted so the reasoning above
+     * stays attached to the thing it is about. */
+    (void)pose_thread;
     CreateThread(NULL, 0, watchdog_thread, NULL, 0, &tid);
 }
 
@@ -867,15 +870,28 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         }
     }
 
-    /* Submit only if a WaitGetPoses has completed and not yet been consumed.
-     * Zero timeout: this poll never blocks the game. */
-    if (!g_ev_ready || WaitForSingleObject(g_ev_ready, 0) != WAIT_OBJECT_0) {
-        g_skipped++;
-        IDirect3DSurface9_Release(bb);
-        if ((n % 600) == 0)
-            glog("frame %ld: no compositor frame ready, skipped %ld", n, g_skipped);
-        return;
-    }
+    /* WaitGetPoses HERE, on the same thread as Submit.
+     *
+     * Every failure in this sequence has involved OpenVR calls split across two
+     * threads, and the evidence finally named it: with the queue lock removed,
+     * xrizer panicked on ThreadId(2) -- OUR pose thread -- inside WaitGetPoses
+     * ("Failed to acquire swapchain image"), the thread died, and its tick
+     * counter froze while the render thread wedged in its own StretchRect.
+     *
+     * xrizer is a reimplementation of an API whose applications are
+     * conventionally single-threaded, and nothing documents it as thread-safe.
+     * Calling WaitGetPoses on one thread and Submit on another is therefore
+     * undefined, and we have been doing exactly that since the hang fix.
+     *
+     * So: back to one thread, which is the SUPPORTED shape. The original hang
+     * risk returns -- WaitGetPoses can block if the compositor session ends --
+     * but failing in a configuration the runtime supports is worth far more
+     * than not failing in one it does not, because only the former can be
+     * reported, reasoned about, or fixed upstream. The watchdog will name it if
+     * it happens, and the stand-down backoff still applies. */
+    g_stage = 2;
+    g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
+    InterlockedIncrement(&g_pose_ticks);
 
     g_stage = 2;
     for (i = 0; i < 2; i++) {
