@@ -104,3 +104,75 @@ Makefile    `make`, `make install` (-> C:\bo1vr); verify disassembles the thunks
 ```
 
 Tested with `gameframe.asi` moved aside, so the only variable was this hook.
+
+---
+
+## 6. Alternate-eye stereo, wired (BAC-274 v1 architecture)
+
+The camera hook now shifts the view per eye, and `gameframe.asi` drives the
+alternation. Confirmed live:
+
+```
+[gameframe] PIPE LIVE: game frames -> compositor (alternate-eye)
+[gameframe] frame 1200: 2400 successful eye submits
+[camera] call #1000  eye=1 (camera shifted)
+[camera] call #1001  eye=0 (camera shifted)
+[camera] call #1002  eye=0 (camera shifted)
+[camera] call #1003  eye=1 (camera shifted)
+[camera] call #1004  eye=1 (camera shifted)
+[camera] call #1005  eye=0 (camera shifted)
+```
+
+**Two `R_SetViewParms` calls per frame, both on the same eye, flipping every
+frame.** That is exactly AER. The two calls have different `out` pointers
+(`03D4E400`, `03D4E540`), i.e. two view slots per frame — consistent with the
+bump-allocating call sites in `camera-hook-plan` §3.3.
+
+### The aliasing trap, which cost a run
+
+The first version sampled at `n % 900 == 0` and reported **`eye=1` every single
+time** — indistinguishable from an alternation that was stuck. It was not: with
+~2 calls per frame, every multiple of 900 lands on the same frame parity. A run
+of **consecutive** calls shows the real pattern and cannot alias.
+
+Worth generalising: a periodic sampler and a periodic signal will lie to you,
+and the lie looks like a constant.
+
+### Where the eye alternation lives, and why
+
+In `gameframe.c`, at `Present`, not in the camera hook. The eye is a property of
+the **frame** — one frame, one back buffer, one eye — and `Present` is the only
+place that sees frame boundaries. `R_SetViewParms` runs more than once per frame
+(measured above), so a counter there would not alternate per frame.
+
+`camera.asi` exports `bo1vr_camera_set_eye`, which `gameframe.asi` resolves with
+`GetProcAddress` once. A small explicit interface, rather than a shared global
+in one of the two DLLs.
+
+### Deliberately position-only
+
+The camera is shifted sideways by half an IPD along the view's own **left** axis
+and nothing else. Orientation is untouched.
+
+That is a choice, not an omission: a sign error in a translation is instantly
+visible and harmless, whereas a wrong rotation basis yields a subtly mirrored
+world that can survive scrutiny for a long time — this project has already lost
+time to exactly that with the props' UV pair. Head orientation comes next, from
+exp 12's poses, once the translation has been confirmed by eye.
+
+The origin **is restored** after `call_original`: 122 measured readers reach it
+through `cg->refdef` by pointer, so leaving the offset in place would move the
+player's idea of where they are, not just the picture.
+
+### IPD as a unit test
+
+`g_ipd_units` defaults to 2.6, from a 65 mm human IPD and the ASSUMED
+inches-per-unit of `camera-hook-plan` §5.4. If that assumption is wrong the
+symptom is obvious and harmless — the stereo separation looks like a giant's or
+a doll's — which makes it a cheap discriminating test rather than a guess buried
+in the code. `bo1vr_camera_set_ipd_units()` changes it.
+
+### NOT verified
+
+That the result **looks** correct in a headset: real parallax, correct eye
+order, comfortable depth. That is BAC-282 and it needs hardware on a head.

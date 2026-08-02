@@ -120,6 +120,8 @@ static uint32_t            g_rw, g_rh;
 
 static LONG g_frames;
 static LONG g_submitted;
+static int  g_cur_eye;              /* which eye THIS frame was rendered for */
+static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
 
@@ -355,7 +357,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         if (!vr_init())         { glog("VR init failed -- staying out of the way"); return; }
         if (!interop_init(g_dev)) { glog("interop init failed -- staying out of the way"); return; }
         g_state = 1;
-        glog("PIPE LIVE: game frames -> compositor");
+        glog("PIPE LIVE: game frames -> compositor (alternate-eye)");
     }
 
     n = InterlockedIncrement(&g_frames);
@@ -385,27 +387,51 @@ static void do_frame(IDirect3DSwapChain9 *sc)
                  g_rw, g_rh);
     }
 
-    for (i = 0; i < 2; i++) {
-        /* THE RESOLVE. The back buffer is 4x multisampled (Exp. 10) and cannot
-         * be submitted or read directly. StretchRect from a multisampled source
-         * to a single-sampled destination performs the resolve; it is also
-         * doing the 2560x1440 -> per-eye downscale in the same call, which is
-         * free here and would otherwise need a second pass.
-         *
-         * Both eyes get the same picture on purpose: this experiment proves the
-         * pipe, not stereo. Per-eye content needs the camera hook (BAC-281). */
-        hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i].surf, NULL,
-                                          D3DTEXF_LINEAR);
-        if (FAILED(hr)) {
-            if (n < 3) glog("StretchRect eye %d hr=0x%08lx", i, (unsigned long)hr);
-            IDirect3DSurface9_Release(bb);
-            return;
-        }
-        submit_eye(i);
+    /* ALTERNATE-EYE RENDERING (AER), the standing v1 decision.
+     *
+     * The game renders ONE view per frame, and camera.asi has already shifted
+     * that view to g_cur_eye's position before this frame was drawn. So the
+     * back buffer contains this eye's picture and only this eye's texture gets
+     * refreshed.
+     *
+     * THE RESOLVE. The back buffer is 4x multisampled (Exp. 10) and cannot be
+     * submitted or read directly. StretchRect from a multisampled source to a
+     * single-sampled destination performs the resolve, and does the
+     * 2560x1440 -> per-eye downscale in the same call. */
+    hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
+                                      D3DTEXF_LINEAR);
+    if (FAILED(hr)) {
+        if (n < 3) glog("StretchRect eye %d hr=0x%08lx", g_cur_eye, (unsigned long)hr);
+        IDirect3DSurface9_Release(bb);
+        return;
     }
+
+    /* Submit BOTH eyes even though only one was refreshed. The other still
+     * holds last frame's picture, which is the whole idea of AER -- each eye
+     * updates at half the game's frame rate but the compositor is never handed
+     * a stale or missing eye, which it would otherwise reproject or drop. */
+    for (i = 0; i < 2; i++)
+        submit_eye(i);
 
     g_comp->PostPresentHandoff();
     IDirect3DSurface9_Release(bb);
+
+    /* Flip, and tell camera.asi which eye the NEXT frame belongs to. The eye
+     * alternation lives here rather than in the camera hook because the eye is
+     * a property of the FRAME -- one frame, one back buffer, one eye -- and
+     * this is the only place that sees frame boundaries. R_SetViewParms can be
+     * called more than once per frame (shadow and portal views go through it
+     * too), so a counter there would not alternate per frame. */
+    g_cur_eye ^= 1;
+    if (!g_set_eye) {
+        HMODULE cam = GetModuleHandleA("camera.asi");
+        if (cam)
+            g_set_eye = (void (*)(int))GetProcAddress(cam, "bo1vr_camera_set_eye");
+        if (!g_set_eye && n < 3)
+            glog("camera.asi not present -- frames will be mono (no per-eye camera)");
+    }
+    if (g_set_eye)
+        g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
         glog("frame %ld: %ld successful eye submits", n, g_submitted);

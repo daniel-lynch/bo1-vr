@@ -189,17 +189,82 @@ static void check_axis(const char *what, const float *m)
          ok ? "ORTHONORMAL (offsets confirmed)" : "NOT orthonormal (offsets or convention WRONG)");
 }
 
+/* --- per-eye camera state, driven from outside ------------------------- */
+
+/* Set by gameframe.asi at the frame boundary, because that is where the eye
+ * alternation belongs: the frame is submitted to ONE eye, so the eye is a
+ * property of the frame, not of this hook. -1 means "leave the camera alone",
+ * which is the state during menus and any frame we are not driving. */
+static volatile LONG g_eye = -1;
+static float         g_ipd_units = 2.6f;   /* see below */
+
+/* Exported so gameframe.asi can drive us without either of us owning the other.
+ * A tiny explicit interface beats a shared global in one of the two DLLs. */
+__declspec(dllexport) void bo1vr_camera_set_eye(int eye)
+{
+    InterlockedExchange(&g_eye, eye);
+}
+
+__declspec(dllexport) void bo1vr_camera_set_ipd_units(float u)
+{
+    g_ipd_units = u;
+}
+
+/* HOW FAR APART ARE THE EYES, IN THIS ENGINE'S UNITS?
+ *
+ * A human IPD is ~65 mm. docs/camera-hook-plan.md §5.4 leaves the world unit
+ * ASSUMED as inches, and exp 12 assumes the same (39.37 units per metre). On
+ * that assumption 65 mm is 2.56 units, hence the 2.6 default.
+ *
+ * This is the single number that a wrong unit assumption shows up in first, and
+ * it shows up as an obvious, harmless symptom: the stereo separation looks like
+ * a giant's or a doll's. That makes it a cheap discriminating test for §5.4
+ * rather than a guess buried in the code -- and it is why it is a settable
+ * value rather than a constant. */
+
 void __cdecl hk_body(void *out, void *in)
 {
     LONG n = InterlockedIncrement(&g_calls);
+    LONG eye = g_eye;
+    unsigned char *rd = (unsigned char *)in;
+    float save_org[3];
+    int   moved = 0;
+
+    /* Shift the camera sideways by half an IPD along the view's own LEFT axis
+     * (refdef axis row 1 -- measured as `left`, not `right`, in
+     * camera-hook-plan §2.1). Left eye moves along +left, right eye along -left.
+     *
+     * Position only, deliberately. Orientation is untouched in this first pass:
+     * a sign error in a translation is instantly visible and harmless, whereas
+     * a wrong rotation basis produces a world that is subtly mirrored and can
+     * survive scrutiny for a long time (this project has already lost time to
+     * exactly that with the props' UV pair). Head orientation comes next, from
+     * exp 12's poses, once the translation is confirmed by eye. */
+    if (eye == 0 || eye == 1) {
+        const float *left = (const float *)(rd + RD_VIEWAXIS + 12);
+        float half = g_ipd_units * 0.5f * (eye == 0 ? 1.0f : -1.0f);
+        float *org = (float *)(rd + RD_VIEWORG);
+        memcpy(save_org, org, sizeof save_org);
+        org[0] += left[0] * half;
+        org[1] += left[1] * half;
+        org[2] += left[2] * half;
+        moved = 1;
+    }
 
     /* Read BEFORE calling the original: `in` is the live refdef and the original
      * may legitimately change what it points at afterwards. */
-    if (n <= 2 || (n % 900) == 0) {
+    /* SAMPLE CONSECUTIVELY, not at multiples of 900. The first version did the
+     * latter and reported eye=1 every single time, which looked exactly like a
+     * stuck alternation. It was aliasing: R_SetViewParms runs ~3 times per
+     * frame (shadow and portal views go through it too), so every multiple of
+     * 900 landed on the same frame parity. A run of consecutive calls shows the
+     * real pattern and cannot alias. */
+    if ((n >= 1000 && n < 1012) || n <= 2) {
         const unsigned char *rd = (const unsigned char *)in;
         const float *org  = (const float *)(rd + RD_VIEWORG);
         const float *axis = (const float *)(rd + RD_VIEWAXIS);
-        camlog("call #%ld  out=%p in=%p", n, out, in);
+        camlog("call #%ld  out=%p in=%p  eye=%ld%s", n, out, in, eye,
+             moved ? " (camera shifted)" : "");
         camlog("  refdef vieworg  = %.3f %.3f %.3f", org[0], org[1], org[2]);
         camlog("  refdef fwd      = %.5f %.5f %.5f", axis[0], axis[1], axis[2]);
         camlog("  refdef left     = %.5f %.5f %.5f", axis[3], axis[4], axis[5]);
@@ -213,11 +278,19 @@ void __cdecl hk_body(void *out, void *in)
 
     call_original(out, in);
 
+    /* RESTORE. Not optional: camera-hook-plan §3.4 measured 122 readers of the
+     * view origin across the client, all reaching it through cg->refdef by
+     * pointer. Leaving our offset in place would move the player's idea of
+     * where they are -- audio, tracers, and anything else that asks the refdef
+     * where the camera is -- not just the picture. */
+    if (moved)
+        memcpy(rd + RD_VIEWORG, save_org, sizeof save_org);
+
     /* Now cross-check the OUTPUT. R_SetViewParms copies the origin across, so
      * agreement here means the refdef offsets, the GfxViewParms offsets and the
      * EDI/ESI convention are ALL correct -- none of the three could look right
      * on its own if another were wrong. */
-    if (n <= 2 || (n % 900) == 0) {
+    if ((n >= 1000 && n < 1012) || n <= 2) {
         const unsigned char *vp = (const unsigned char *)out;
         const float *vorg = (const float *)(vp + VP_ORIGIN);
         const float *iorg = (const float *)((const unsigned char *)in + RD_VIEWORG);
