@@ -43,3 +43,7 @@ experiments/**/out-noeh/
 
 # Local, machine-specific toolchain overrides
 local.mk
+
+# Regenerable analysis caches from research/engine tooling
+research/engine/*.pkl
+research/engine/__pycache__/
