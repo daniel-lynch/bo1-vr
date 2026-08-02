@@ -155,7 +155,42 @@ static int vr_init(void)
     err = (EVRInitError)0xDEADBEEF;
     fnInit2(&err, EVRApplicationType_VRApplication_Scene, "");
     if (err != EVRInitError_VRInitError_None) {
-        glog("VR_InitInternal2 err=%d -- no runtime? (Monado/WiVRn not up)", (int)err);
+        glog("VR_InitInternal2 err=%d", (int)err);
+        /* WHAT CAN THIS PROCESS ACTUALLY SEE?
+         *
+         * The game runs inside the Steam Linux Runtime pressure-vessel
+         * container, whose /usr is the container's, not the host's -- so a path
+         * that resolves on the bench may simply not exist here, and err=105
+         * InterfaceNotFound looks identical whether the runtime is missing, the
+         * OpenXR manifest is missing, or monado's socket is unreachable.
+         *
+         * We cannot enter the container from outside to look (bwrap refuses to
+         * set up a uid map under an unprivileged shell). But we are already
+         * INSIDE it, and Wine maps the container's filesystem root at Z:. So
+         * ask from here. This is the only vantage point that can answer it. */
+        {
+            static const char *paths[] = {
+                "Z:\\usr\\share\\openxr\\1\\openxr_monado.json",
+                "Z:\\run\\host\\usr\\share\\openxr\\1\\openxr_monado.json",
+                "Z:\\usr\\lib\\x86_64-linux-gnu\\libopenxr_monado.so",
+                "Z:\\run\\host\\usr\\lib\\x86_64-linux-gnu\\libopenxr_monado.so",
+                "Z:\\run\\user\\1000\\monado_comp_ipc",
+                "Z:\\home\\dlynch\\.config\\openxr\\1\\active_runtime.json",
+                "Z:\\home\\dlynch\\.local\\share\\bo1vr-xrizer\\bin\\vrclient.so",
+                "Z:\\home\\dlynch\\.local\\share\\bo1vr-xrizer\\bin\\linux64\\vrclient.so",
+            };
+            size_t k;
+            for (k = 0; k < sizeof(paths) / sizeof(paths[0]); k++)
+                glog("  see %-62s : %s", paths[k],
+                     GetFileAttributesA(paths[k]) == INVALID_FILE_ATTRIBUTES ? "NO" : "yes");
+            {
+                char buf[512];
+                DWORD n2 = GetEnvironmentVariableA("XR_RUNTIME_JSON", buf, sizeof buf);
+                glog("  XR_RUNTIME_JSON = %s", n2 ? buf : "(unset)");
+                n2 = GetEnvironmentVariableA("PROTON_VR_RUNTIME", buf, sizeof buf);
+                glog("  PROTON_VR_RUNTIME = %s", n2 ? buf : "(unset)");
+            }
+        }
         return 0;
     }
 

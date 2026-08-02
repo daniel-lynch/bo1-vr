@@ -36,9 +36,24 @@ install)
   [ -f "$XRIZER/bin/linux64/vrclient.so" ] || {
       echo "no xrizer at $XRIZER/bin/linux64/vrclient.so" >&2; exit 1; }
 
+  # COPY, NOT SYMLINK, and this is not a style preference.
+  #
+  # The first version of this script symlinked into flatpak's tree so a WiVRn
+  # update would be picked up automatically. On the bench (`proton run`, on the
+  # host) that worked. Inside a real Steam launch it did not: the game runs in
+  # the Steam Linux Runtime pressure-vessel CONTAINER, which bind-mounts a
+  # limited set of paths, and a symlink whose target is not one of them dangles.
+  # The runtime then looks unusable and VR_InitInternal2 returns
+  # err=105 InterfaceNotFound -- indistinguishable from having no runtime at all.
+  #
+  # So the file is copied in. The cost is that a WiVRn update no longer
+  # propagates; `install` re-copies, and the recorded source hash below is how
+  # staleness is noticed rather than guessed at.
   mkdir -p "$STAGE/bin/linux64"
-  ln -sfn "$XRIZER/bin/linux64/vrclient.so" "$STAGE/bin/linux64/vrclient.so"
-  ln -sfn linux64/vrclient.so               "$STAGE/bin/vrclient.so"
+  cp -f "$XRIZER/bin/linux64/vrclient.so" "$STAGE/bin/linux64/vrclient.so"
+  cp -f "$XRIZER/bin/linux64/vrclient.so" "$STAGE/bin/vrclient.so"
+  ( cd "$XRIZER/bin/linux64" && sha256sum vrclient.so ) > "$STAGE/.source-sha256"
+  echo "  copied vrclient.so for both arch paths (container-safe)"
   [ -e "$XRIZER/bin/version.txt" ] && cp -f "$XRIZER/bin/version.txt" "$STAGE/bin/version.txt" \
       || : > "$STAGE/bin/version.txt"
   echo "staged runtime at $STAGE"

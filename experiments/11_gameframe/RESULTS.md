@@ -59,15 +59,64 @@ The cause is Decision 9 restated from the other end: under classic WoW64 a
 32-bit xrizer exists. Under new-WoW64 the 32-bit PE runs in a 64-bit host
 process and the `linux64` build is the correct one.
 
-**Set once, by hand, in Steam → Black Ops → Properties → Launch Options:**
+### 2b. …and `PROTON_USE_WOW64=1` alone is not enough: the container
+
+With the launch option set, the game's own environment was verified live from
+`/proc/<pid>/environ`: `PROTON_USE_WOW64=1`, `WINEARCH=wow64`, and
+`PROTON_VR_RUNTIME=/home/dlynch/.local/share/bo1vr-xrizer` all reach
+`BlackOps.exe`. **And it still failed with err=105.**
+
+The bench and the real launch differ in one more way: the game runs inside the
+**Steam Linux Runtime pressure-vessel container**, whose `/usr` is the
+container's, not the host's. `err=105 InterfaceNotFound` looks identical
+whether the OpenVR runtime is missing, the OpenXR manifest is missing, or
+monado's socket is unreachable, so it had to be measured.
+
+It could not be measured from outside — `bwrap` refuses to set up a uid map
+under an unprivileged shell, so the container cannot be entered to look. But the
+plugin is *already inside it*, and Wine maps the container root at `Z:`. Asking
+from there is the only vantage point that works, and it answered exactly:
+
+| Path, as seen by the game | |
+|---|---|
+| `/usr/share/openxr/1/openxr_monado.json` | **NO** — container's `/usr` |
+| `/run/host/usr/share/openxr/1/openxr_monado.json` | yes — the host's, remapped |
+| `/usr/lib/x86_64-linux-gnu/libopenxr_monado.so` | **NO** |
+| `/run/host/usr/lib/x86_64-linux-gnu/libopenxr_monado.so` | yes |
+| `/run/user/1000/monado_comp_ipc` | **NO** — *the blocker* |
+| `~/.local/share/bo1vr-xrizer/bin/vrclient.so` | yes — `$HOME` is mounted |
+
+Two separate problems, and the second is fatal on its own: **monado's IPC socket
+is not exposed into the container**, so even a correctly located OpenXR manifest
+would have nothing to connect to.
+
+Both are fixed with environment, and `PRESSURE_VESSEL_FILESYSTEMS_RW` /
+`_RO` are confirmed present in this pressure-vessel build (`strings` on
+`pressure-vessel-wrap`).
+
+**The complete launch option — Steam → Black Ops → Properties → Launch Options:**
 
 ```
-PROTON_USE_WOW64=1 %command%
+PROTON_USE_WOW64=1 PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc XR_RUNTIME_JSON=/run/host/usr/share/openxr/1/openxr_monado.json %command%
 ```
+
+* `PROTON_USE_WOW64=1` — new-WoW64, §2.
+* `PRESSURE_VESSEL_FILESYSTEMS_RW=...monado_comp_ipc` — share monado's socket
+  into the container.
+* `XR_RUNTIME_JSON=/run/host/...` — the host's manifest at the path the
+  container sees it. Its `library_path` is *relative*
+  (`../../../lib/x86_64-linux-gnu/libopenxr_monado.so`), so it resolves to
+  `/run/host/usr/lib/...`, which the table above confirms exists.
 
 Everything else the mod needs lives in the prefix and installs itself. This is
-one line, plainly visible to the user, and removed by clearing the field —
-still a far smaller footprint than writing into the game install.
+one line, plainly visible, removed by clearing the field — still a far smaller
+footprint than writing into the game install.
+
+**Deliberately NOT done:** creating `~/.config/openxr/1/active_runtime.json`.
+It would be seen inside the container (`$HOME` is mounted) and would save one
+variable, but any absolute `library_path` correct for the container
+(`/run/host/...`) is wrong on the host, and it is a user-global file that other
+VR applications read. A launch option is scoped to this game.
 
 ## 3. The OpenVR runtime, without an environment variable
 
