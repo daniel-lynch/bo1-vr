@@ -3,7 +3,24 @@
 **Question.** Exp. 10 got hold of the game's swap chain. Can its frames reach
 the headset?
 
-**Answer: the pipe works, and it needs exactly one Steam launch option.**
+**Answer: yes. Confirmed in the real Steam-launched game**, with the launch
+option of §2/§2b set:
+
+```
+[gameframe] OpenVR up: compositor=143B20E8 system=047D2608 per-eye 896x1007
+[gameframe] vk: instance=047D0A88 phys=047D0AE0 device=047CF970 queue=047CF9B0 family=0
+[gameframe] eye 0: VkImage=0x00007951d0dcd790 layout=1 896x1007 fmt=44
+[gameframe] PIPE LIVE: game frames -> compositor
+[gameframe] source backbuffer 2560x1440 fmt=21 MULTISAMPLE=4 pool=0 -> per-eye 896x1007
+[gameframe] frame 2: 4 successful eye submits
+```
+```
+DEBUG [comp_swapchain_create_init] CREATE 0x730e50008f10 896x1007 VK_FORMAT_B8G8R8A8_SRGB (50)
+```
+
+That is **the game's own 4x multisampled 2560x1440 back buffer**, resolved and
+delivered to monado, from inside `BlackOps.exe`, with nothing written to the
+game install. The section below is the bench work that got there.
 
 ```
 [gameframe] OpenVR up: compositor=00676008 system=001195A0 per-eye 896x1007
