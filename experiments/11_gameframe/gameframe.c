@@ -828,8 +828,22 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         submit_eye(i);
     }
 
-    g_stage = 5;
-    g_comp->PostPresentHandoff();
+    /* PostPresentHandoff REMOVED -- it is where we wedge.
+     *
+     * The watchdog caught it: "no frame for 3 s, stuck at stage 5", stage 5
+     * being this call, with a matching xrizer panic at the same moment
+     * ("Failed to acquire swapchain image: ERROR_RUNTIME_FAILURE"). Afterwards
+     * the hook reached idle and was never entered again -- the game's own
+     * render loop had stopped -- and the pose ticks froze.
+     *
+     * It is an optional HINT in OpenVR: it tells the compositor the app has
+     * finished handing over its frame so it can start work earlier. Skipping it
+     * costs a little latency and nothing else. Given it is the confirmed wedge
+     * point, it goes.
+     *
+     * This also kills the theory the watchdog was built to test: we were NOT
+     * stuck at stage 3 or 4, so Submit holding DXVK's submission queue lock is
+     * not the problem. */
     SetEvent(g_ev_consumed);
     g_stage = 0;
     IDirect3DSurface9_Release(bb);
