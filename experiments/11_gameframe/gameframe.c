@@ -120,7 +120,8 @@ static uint32_t            g_rw, g_rh;
 
 static LONG g_frames;
 static LONG g_submitted;
-static int  g_cur_eye;              /* which eye THIS frame was rendered for */
+static int  g_cur_eye;              /* AER fallback: which eye THIS frame is */
+static int  g_dual;                 /* 1 once camera.asi supplies both eyes */
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
@@ -284,6 +285,54 @@ static void release_eyes(void)
     }
 }
 
+/* --------------------------------------------------- dual-view capture */
+
+static LONG g_captured;      /* eyes captured during THIS frame by camera.asi */
+static int  g_rt_logged;
+
+/* Called by camera.asi immediately after each of its two R_RenderScene calls.
+ *
+ * WHY THE CURRENT RENDER TARGET AND NOT THE SWAP CHAIN'S BACK BUFFER.
+ * We are mid-frame here: the game has drawn the 3D scene but has not finished
+ * the frame, and it may well render the scene into an offscreen target and
+ * composite later (this engine has post-processing). Reading the swap chain's
+ * back buffer at this moment would then capture whatever was left there --
+ * plausibly last frame's image, which would look like working stereo with a
+ * one-frame lag rather than like a bug. GetRenderTarget(0) is whatever the game
+ * is actually drawing into right now, offscreen or not, so it is correct in
+ * both cases. Its description is logged once so we find out which.
+ *
+ * StretchRect does the MSAA resolve and the downscale to the per-eye size in
+ * one call, exactly as the AER path did. */
+__declspec(dllexport) void bo1vr_capture_eye(int eye)
+{
+    IDirect3DSurface9 *rt = NULL;
+    HRESULT hr;
+
+    if (g_state != 1 || !g_dev || eye < 0 || eye > 1)
+        return;                               /* not up yet -- first frames */
+
+    if (FAILED(IDirect3DDevice9_GetRenderTarget(g_dev, 0, &rt)) || !rt)
+        return;
+
+    if (!g_rt_logged) {
+        D3DSURFACE_DESC d;
+        if (SUCCEEDED(IDirect3DSurface9_GetDesc(rt, &d)))
+            glog("scene render target %ux%u fmt=%d MULTISAMPLE=%d pool=%d usage=0x%lx",
+                 d.Width, d.Height, (int)d.Format, (int)d.MultiSampleType,
+                 (int)d.Pool, (unsigned long)d.Usage);
+        g_rt_logged = 1;
+    }
+
+    hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
+    if (FAILED(hr)) {
+        if (g_captured < 4) glog("capture eye %d StretchRect hr=0x%08lx", eye, (unsigned long)hr);
+    } else {
+        InterlockedIncrement(&g_captured);
+    }
+    IDirect3DSurface9_Release(rt);
+}
+
 /* ------------------------------------------------------------ per-frame */
 
 static void submit_eye(int i)
@@ -387,29 +436,31 @@ static void do_frame(IDirect3DSwapChain9 *sc)
                  g_rw, g_rh);
     }
 
-    /* ALTERNATE-EYE RENDERING (AER), the standing v1 decision.
+    /* TRUE DUAL VIEW when camera.asi has already given us both eyes.
      *
-     * The game renders ONE view per frame, and camera.asi has already shifted
-     * that view to g_cur_eye's position before this frame was drawn. So the
-     * back buffer contains this eye's picture and only this eye's texture gets
-     * refreshed.
+     * It hooks R_RenderScene and calls the original twice per frame, capturing
+     * the scene render target after each -- so by the time we get here both eye
+     * textures already hold their own view, taken this frame. Nothing to
+     * resolve, and no alternation: every frame delivers both eyes at the game's
+     * full rate.
      *
-     * THE RESOLVE. The back buffer is 4x multisampled (Exp. 10) and cannot be
-     * submitted or read directly. StretchRect from a multisampled source to a
-     * single-sampled destination performs the resolve, and does the
-     * 2560x1440 -> per-eye downscale in the same call. */
-    hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
-                                      D3DTEXF_LINEAR);
-    if (FAILED(hr)) {
-        if (n < 3) glog("StretchRect eye %d hr=0x%08lx", g_cur_eye, (unsigned long)hr);
-        IDirect3DSurface9_Release(bb);
-        return;
+     * FALLBACK is the old alternate-eye path, used until camera.asi's hook is
+     * live (the first frames, or if it failed). AER updates one eye per frame,
+     * which halves each eye's rate and makes the desktop mirror visibly twitch
+     * left-right, because the monitor shows every frame and consecutive frames
+     * are different eyes. That twitch is what dual view removes. */
+    if (InterlockedExchange(&g_captured, 0) >= 2) {
+        if (!g_dual) { glog("DUAL VIEW live: both eyes rendered per frame"); g_dual = 1; }
+    } else {
+        hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
+                                          D3DTEXF_LINEAR);
+        if (FAILED(hr)) {
+            if (n < 3) glog("StretchRect eye %d hr=0x%08lx", g_cur_eye, (unsigned long)hr);
+            IDirect3DSurface9_Release(bb);
+            return;
+        }
     }
 
-    /* Submit BOTH eyes even though only one was refreshed. The other still
-     * holds last frame's picture, which is the whole idea of AER -- each eye
-     * updates at half the game's frame rate but the compositor is never handed
-     * a stale or missing eye, which it would otherwise reproject or drop. */
     for (i = 0; i < 2; i++)
         submit_eye(i);
 
@@ -422,6 +473,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * this is the only place that sees frame boundaries. R_SetViewParms can be
      * called more than once per frame (shadow and portal views go through it
      * too), so a counter there would not alternate per frame. */
+    if (g_dual)
+        return;                 /* dual view owns the eyes; no alternation */
+
     g_cur_eye ^= 1;
     if (!g_set_eye) {
         HMODULE cam = GetModuleHandleA("camera.asi");

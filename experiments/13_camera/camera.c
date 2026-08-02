@@ -46,6 +46,7 @@
  * preferred base so that a relocated image still resolves. */
 #define PREFERRED_BASE   0x400000u
 #define VA_R_SetViewParms 0x6C7F80u
+#define VA_R_RenderScene  0x6C8C40u
 
 /* refdef_t (base = cg + 0x8C100) */
 #define RD_TANHALFFOVX   0x10
@@ -309,10 +310,83 @@ void __cdecl hk_body(void *out, void *in)
     }
 }
 
+/* --- TRUE DUAL VIEW ------------------------------------------------------
+ *
+ * R_RenderScene @ 0x6C8C40 is plain __cdecl taking one argument (the refdef)
+ * with a single caller, so unlike R_SetViewParms it needs no asm. Calling the
+ * original TWICE per frame gives two full scene renders with two different
+ * cameras -- camera-hook-plan §3.3 measured that the view-parms slot is
+ * bump-allocated, so the second call gets its own GfxViewParms rather than
+ * stamping on the first.
+ *
+ * After each render we ask gameframe.asi to capture the scene render target
+ * into that eye's texture. Without the capture the second render would simply
+ * overwrite the first and we would be back to one view per frame.
+ *
+ * THIS IS WHAT REMOVES THE TWITCH. Alternate-eye rendering drew one eye per
+ * frame, so the monitor -- which shows every frame -- saw the camera jumping
+ * left-right at frame rate, and each eye updated at only half the game's rate.
+ * Now every frame contains both eyes and the monitor shows one steady view.
+ *
+ * The pose is still applied inside the 0x6C7F80 hook, NOT here, and that is
+ * deliberate: §3.4 measured that R_RenderScene caches the view origin into the
+ * lighting/PVS globals at 0x3AC3060 and 0x396A644 BEFORE the view is built.
+ * Patching inside 0x6C7F80 leaves those holding the HEAD pose, which is what
+ * keeps lighting and visibility coherent between the two eyes.
+ */
+typedef void (__cdecl *pfn_renderscene)(void *refdef);
+static pfn_renderscene o_R_RenderScene;
+static void (*g_capture)(int);
+static int  g_dual_logged;
+
+static void __cdecl hk_R_RenderScene(void *refdef)
+{
+    /* Log the FIRST call unconditionally. Without this, "R_RenderScene never
+     * ran" and "it ran but the capture entry would not resolve" produce exactly
+     * the same evidence -- nothing at all -- and the first run of this hook hit
+     * precisely that ambiguity: the log showed the hook installed and then
+     * silence, because the session never left the menu and R_RenderScene only
+     * runs for a 3D scene. */
+    if (!g_dual_logged) {
+        g_dual_logged = 1;
+        camlog("R_RenderScene reached (first 3D scene)");
+    }
+
+    if (!g_capture) {
+        HMODULE gf = GetModuleHandleA("gameframe.asi");
+        if (gf) g_capture = (void (*)(int))GetProcAddress(gf, "bo1vr_capture_eye");
+        if (!g_capture) {
+            static int moaned;
+            if (!moaned) {
+                moaned = 1;
+                camlog("no bo1vr_capture_eye (gameframe.asi %s) -- single render, "
+                       "alternate-eye fallback", gf ? "loaded but lacks the export" : "not loaded");
+            }
+            /* A second render would only overwrite the first with nothing to
+             * capture it, so render once and let the fallback handle the eyes. */
+            o_R_RenderScene(refdef);
+            return;
+        }
+        camlog("dual view: capture entry resolved -- two renders per frame");
+    }
+
+    bo1vr_camera_set_eye(0);
+    o_R_RenderScene(refdef);
+    g_capture(0);
+
+    bo1vr_camera_set_eye(1);
+    o_R_RenderScene(refdef);
+    g_capture(1);
+
+    /* Back to "not ours", so any later view this frame -- and the next frame up
+     * to its own R_RenderScene -- is left completely alone. */
+    bo1vr_camera_set_eye(-1);
+}
+
 static DWORD WINAPI init(LPVOID p)
 {
     unsigned char *base = (unsigned char *)GetModuleHandleA(NULL);
-    void *target;
+    void *target, *scene;
     MH_STATUS st;
 
     (void)p;
@@ -331,8 +405,14 @@ static DWORD WINAPI init(LPVOID p)
         camlog("FAILED to hook R_SetViewParms at %p", target);
         return 0;
     }
-    camlog("hooked R_SetViewParms; trampoline=%p. OBSERVE ONLY -- nothing is written.",
-         o_R_SetViewParms);
+    camlog("hooked R_SetViewParms; trampoline=%p", o_R_SetViewParms);
+
+    scene = base + (VA_R_RenderScene - PREFERRED_BASE);
+    if (MH_CreateHook(scene, (void *)hk_R_RenderScene, (void **)&o_R_RenderScene) == MH_OK &&
+        MH_EnableHook(scene) == MH_OK)
+        camlog("hooked R_RenderScene %p -- DUAL VIEW (two renders per frame)", scene);
+    else
+        camlog("FAILED to hook R_RenderScene at %p -- falling back to alternate-eye", scene);
     return 0;
 }
 
