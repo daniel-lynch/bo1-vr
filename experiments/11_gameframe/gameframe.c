@@ -332,6 +332,7 @@ static LONG g_captured;      /* eyes captured during THIS frame by camera.asi */
 static int  g_rt_logged;
 static RECT g_crop;
 static int  g_have_crop;
+static IDirect3DSurface9 *g_resolve;   /* non-MSAA intermediate, source-sized */
 
 /* THE ASPECT FIX.
  *
@@ -373,6 +374,19 @@ static void setup_crop(UINT sw, UINT sh)
     g_crop.bottom = g_crop.top  + (LONG)ch;
     g_have_crop   = 1;
 
+    /* The intermediate the MSAA resolve lands in. Same size as the source and
+     * single-sampled, which is what makes the resolve legal with no rect. */
+    if (!g_resolve) {
+        if (FAILED(IDirect3DDevice9_CreateRenderTarget(g_dev, sw, sh, D3DFMT_X8R8G8B8,
+                                                       D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                       &g_resolve, NULL))) {
+            g_resolve = NULL;
+            g_have_crop = 0;         /* no intermediate -> no crop; stretch as before */
+            glog("could not create the %ux%u resolve target -- falling back to full-frame "
+                 "stretch (aspect will be wrong, but it will not be black)", sw, sh);
+        }
+    }
+
     /* Widen the render FOV by exactly what the crop discards, so the visible
      * part subtends the headset's angles. */
     if (g_fov_ok) {
@@ -381,12 +395,16 @@ static void setup_crop(UINT sw, UINT sh)
             g_fov[e][0] = g_fov_hmd[e][0] * (float)((double)sw / cw);
             g_fov[e][1] = g_fov_hmd[e][1] * (float)((double)sh / ch);
         }
-        glog("crop %ldx%ld at (%ld,%ld) of %ux%u -> render tanHalfFov %.4f %.4f "
-             "(headset %.4f %.4f)",
-             g_crop.right - g_crop.left, g_crop.bottom - g_crop.top,
-             g_crop.left, g_crop.top, sw, sh,
-             g_fov[0][0], g_fov[0][1], g_fov_hmd[0][0], g_fov_hmd[0][1]);
     }
+    /* Log unconditionally. The first version logged only when g_fov_ok, and
+     * when the screen came up black there was no crop line at all -- so the
+     * geometry could not be checked against the symptom. Same lesson as the
+     * slot watch: an instrument that is silent in the failing case is worse
+     * than none, because it reads as "that code did not run". */
+    glog("crop %ldx%ld at (%ld,%ld) of %ux%u -> render tanHalfFov %.4f %.4f (headset %.4f %.4f) fov_ok=%d",
+         g_crop.right - g_crop.left, g_crop.bottom - g_crop.top,
+         g_crop.left, g_crop.top, sw, sh,
+         g_fov[0][0], g_fov[0][1], g_fov_hmd[0][0], g_fov_hmd[0][1], g_fov_ok);
 }
 
 /* Called by camera.asi immediately after each of its two R_RenderScene calls.
@@ -425,9 +443,26 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
         g_rt_logged = 1;
     }
 
-    /* CROP, DO NOT STRETCH. See setup_crop. */
-    hr = IDirect3DDevice9_StretchRect(g_dev, rt, g_have_crop ? &g_crop : NULL,
-                                      g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
+    /* TWO STEPS, BECAUSE THE SOURCE IS MULTISAMPLED.
+     *
+     * D3D9 will not copy a SUB-RECTANGLE of a multisampled surface: a resolve
+     * has to take the whole thing. Passing a source rect anyway is what turned
+     * the headset black -- and it did NOT fail, StretchRect returned success
+     * and produced nothing, so the capture counted and "DUAL VIEW live" was
+     * still logged. A silent success is the worst possible failure mode here.
+     *
+     * So: resolve the whole MSAA surface into a plain intermediate first (no
+     * rect, which is legal), then crop from that (not multisampled, so a rect
+     * is fine). */
+    if (g_have_crop && g_resolve) {
+        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_resolve, NULL, D3DTEXF_NONE);
+        if (SUCCEEDED(hr))
+            hr = IDirect3DDevice9_StretchRect(g_dev, g_resolve, &g_crop,
+                                              g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
+    } else {
+        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye].surf, NULL,
+                                          D3DTEXF_LINEAR);
+    }
     if (FAILED(hr)) {
         if (g_captured < 4) glog("capture eye %d StretchRect hr=0x%08lx", eye, (unsigned long)hr);
     } else {
@@ -685,6 +720,8 @@ static HRESULT WINAPI my_reset(IDirect3DDevice9 *dev, D3DPRESENT_PARAMETERS *pp)
      * Reset fails outright. Rebuild them afterwards. */
     if (g_state == 1) {
         glog("Reset: releasing eye targets");
+        if (g_resolve) { IDirect3DSurface9_Release(g_resolve); g_resolve = NULL; }
+        g_have_crop = 0; g_rt_logged = 0;
         release_eyes();
         g_state = 2;                        /* rebuild after the reset */
     }
