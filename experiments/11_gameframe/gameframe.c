@@ -637,6 +637,27 @@ __declspec(dllexport) int bo1vr_get_eye_fov(int eye, float *tanx, float *tany)
 
 /* ------------------------------------------------------------ per-frame */
 
+/* BISECT SWITCHES, read once. The freeze happens with submission on and not
+ * with it off, but the watchdog shows us IDLE when it happens and the pose
+ * thread still ticking -- so we are not blocked, we leave something wedged and
+ * the game's own render loop stops afterwards. These split the submission path
+ * into its three separable parts so one run names the culprit:
+ *
+ *   nolock.on    skip LockSubmissionQueue/ReleaseSubmissionQueue around Submit
+ *   notrans.on   skip the image layout transitions
+ *   nosubmit.on  do everything except the actual IVRCompositor::Submit
+ *
+ * Each is a file in C:\bo1vr. If the game stops freezing with one of them
+ * present, that part is the culprit. */
+static int opt(const char *name)
+{
+    char p[MAX_PATH];
+    lstrcpyA(p, "C:\\bo1vr\\");
+    lstrcatA(p, name);
+    return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES;
+}
+static int g_opts_read, g_nolock, g_notrans, g_nosubmit;
+
 static void submit_eye(int i)
 {
     bo1vr_VkImageSubresourceRange sub;
@@ -646,6 +667,16 @@ static void submit_eye(int i)
 
     struct eye_target *E = &g_eyes[i][g_buf];
 
+    if (!g_opts_read) {
+        g_opts_read = 1;
+        g_nolock   = opt("nolock.on");
+        g_notrans  = opt("notrans.on");
+        g_nosubmit = opt("nosubmit.on");
+        if (g_nolock || g_notrans || g_nosubmit)
+            glog("BISECT: nolock=%d notrans=%d nosubmit=%d",
+                 g_nolock, g_notrans, g_nosubmit);
+    }
+
     sub.aspectMask     = BO1VR_VK_IMAGE_ASPECT_COLOR_BIT;
     sub.baseMipLevel   = 0;
     sub.levelCount     = E->info.mipLevels;
@@ -654,11 +685,13 @@ static void submit_eye(int i)
 
     /* Exactly the order Proton's own D3D11 path uses
      * (vrcompositor_manual.c load_compositor_texture_dxvk). */
-    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
-                                             E->layout,
-                                             BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    if (!g_notrans)
+        g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
+                                                 E->layout,
+                                                 BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     g_vkdev->lpVtbl->FlushRenderingCommands(g_vkdev);
-    g_vkdev->lpVtbl->LockSubmissionQueue(g_vkdev);
+    if (!g_nolock)
+        g_vkdev->lpVtbl->LockSubmissionQueue(g_vkdev);
 
     memset(&vkdata, 0, sizeof(vkdata));
     vkdata.m_nImage            = E->image;
@@ -679,13 +712,16 @@ static void submit_eye(int i)
     /* pBounds is NULL and must stay NULL: xrizer ignores it (Exp. 6), so it is
      * not a way to slice one texture into two eyes -- it would send the whole
      * thing to both. */
-    ce = g_comp->Submit(i == 0 ? EVREye_Eye_Left : EVREye_Eye_Right, &tex, NULL,
-                        EVRSubmitFlags_Submit_Default);
+    ce = g_nosubmit ? EVRCompositorError_VRCompositorError_None
+                    : g_comp->Submit(i == 0 ? EVREye_Eye_Left : EVREye_Eye_Right, &tex, NULL,
+                                     EVRSubmitFlags_Submit_Default);
 
-    g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
-    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
-                                             BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             E->layout);
+    if (!g_nolock)
+        g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
+    if (!g_notrans)
+        g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
+                                                 BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                 E->layout);
 
     if (ce == EVRCompositorError_VRCompositorError_None) {
         InterlockedIncrement(&g_submitted);
