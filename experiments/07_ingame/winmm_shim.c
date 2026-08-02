@@ -72,6 +72,28 @@ static void shimlog(const char *fmt, ...)
     fflush(stderr);
     strcat(buf, "\n");
     OutputDebugStringA(buf);
+
+    /* AND TO A FILE, because under a real Steam launch neither of the above
+     * can be read. Steam starts the game itself; there is no shell to inherit
+     * stderr, and WINEDEBUG=+debugstr cannot be set without a launch option --
+     * which is exactly what the prefix-only injection of Exp. 9 exists to
+     * avoid. A file in the prefix's temp directory is the only channel that
+     * survives, and it is what proves the shim ran at all. */
+    {
+        char lp[MAX_PATH];
+        DWORD n2 = GetTempPathA(MAX_PATH - 24, lp);
+        if (n2 && n2 < MAX_PATH - 24) {
+            HANDLE h;
+            lstrcatA(lp, "bo1vr_shim.log");
+            h = CreateFileA(lp, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE) {
+                DWORD wrote;
+                WriteFile(h, buf, (DWORD)strlen(buf), &wrote, NULL);
+                CloseHandle(h);
+            }
+        }
+    }
 }
 
 /* One indirect tail jump per export. mingw32 prefixes C symbols with '_'. */
@@ -123,9 +145,30 @@ static int resolve_real_winmm(void)
         shimlog("GetSystemDirectoryA failed (n=%u err=%lu)", n, GetLastError());
         return 0;
     }
-    lstrcatA(path, "\\winmm.dll");
 
+    /* TWO PLACEMENTS, ONE BINARY.
+     *
+     * (a) Beside the exe (Exp. 7). The system directory still holds the real
+     *     winmm, so "<sysdir>\winmm.dll" is it, and winmm_real.dll does not
+     *     exist.
+     *
+     * (b) AS "<sysdir>\winmm.dll" itself (Exp. 9), which is how the mod loads
+     *     without putting anything in the game install: the prefix's
+     *     syswow64\winmm.dll symlink into Proton's builtins is renamed to
+     *     winmm_real.dll and we take its place. Reading "<sysdir>\winmm.dll"
+     *     there would be US, and the first forwarded call would recurse until
+     *     the stack died.
+     *
+     * So probe winmm_real.dll FIRST and fall back. Which placement is in use is
+     * then a property of the prefix, not of this binary, and (a) is unchanged.
+     */
+    lstrcatA(path, "\\winmm_real.dll");
     real = LoadLibraryA(path);
+    if (!real) {
+        GetSystemDirectoryA(path, MAX_PATH);
+        lstrcatA(path, "\\winmm.dll");
+        real = LoadLibraryA(path);
+    }
     if (!real) {
         /* err 126 here means a bare "winmm=n" override: see the header comment. */
         shimlog("LoadLibraryA(\"%s\") FAILED err=%lu", path, GetLastError());
@@ -159,10 +202,24 @@ static void load_the_asi_loader(HMODULE self)
     }
     slash = strrchr(path, '\\');
     if (!slash) { shimlog("no backslash in \"%s\"", path); return; }
-    lstrcpyA(slash + 1, "dinput8.dll");
 
+    /* Prefer a uniquely-named loader, fall back to dinput8.dll.
+     *
+     * In the Exp. 7 placement (beside the exe) the loader is dinput8.dll,
+     * because that is what dist/ builds and the name is harmless in a game
+     * directory. In the Exp. 9 placement our own directory IS the prefix's
+     * syswow64, where "dinput8.dll" is a real system DLL other software may
+     * legitimately want -- shadowing it to smuggle our loader in would be a
+     * booby trap for anything else in the prefix. So look for bo1vr_loader.dll
+     * first; only that name goes into a system directory. */
+    lstrcpyA(slash + 1, "bo1vr_loader.dll");
     SetLastError(0);
     m = LoadLibraryA(path);
+    if (!m) {
+        lstrcpyA(slash + 1, "dinput8.dll");
+        SetLastError(0);
+        m = LoadLibraryA(path);
+    }
     if (m)
         shimlog("loaded ASI loader %s at %p", path, (void *)m);
     else
