@@ -442,3 +442,79 @@ out/gdb-*.txt   the debugger sessions, including the two false trails of §6b
 
 `WORK` defaults to `/mnt/games/tmp/bo1vr-exp08` rather than `/tmp` — the root
 filesystem has 2.0 GB free and a Proton prefix does not fit.
+
+---
+
+## 10. ANSWERED: the Steam client launch works
+
+Run through `steam -applaunch 42700` (`steam-launch.sh`, run 2). **The game
+starts, initialises fully, and exits cleanly.** It is not the DRM self-destruct
+of §3; that path is not taken at all when the real client launches it.
+
+Steam's own `console-linux.txt` is the authoritative lifetime:
+
+```
+20:26:11  Adding process 2446917 ... for gameID 42700
+20:26:13  Fossilize INFO: Overriding serialization path: .../42700/fozpipelinesv6
+20:27:04  Removing process 2446653/2446652/2446651 for gameID 42700
+```
+
+**53 seconds**, against 4.2-13.2 s for all eight matrix cases in §1.
+
+### Three independent artefacts, all of which the §3 exit cannot produce
+
+| Artefact | Before | After | Meaning |
+|---|---|---|---|
+| `players/config.cfg` | md5 `103d8ca3…` | md5 `b759fce7…`, mtime 20:26 | **Rewritten on clean shutdown.** 545 -> 545 lines, and the ONLY line that differs is `sd_xa2_device_guid` (an XAudio2 device GUID, reassigned per host session). A full, well-formed config write. |
+| `BlackOps.exe.332.STEAMSTART` | absent | 41,121 bytes, mtime 20:26 | **A new CEG ownership token**, alongside `.344` and `.348` from May 2025. This is the artefact the `0x005F3290` handshake exists to produce. |
+| `AppData/Local/Activision/CoD/__BlackOps` | absent | absent, dir mtime 20:27 | `Sys_CheckImproperQuit` wrote the marker at startup and **deleted it on clean exit** (§6a). The directory mtime moved; the file did not survive. |
+
+The §3 stub calls `ExitProcess(0)` directly. It writes no config, produces no
+`.STEAMSTART`, and cannot reach the improper-quit cleanup. Every one of those
+three happened. The conclusion does not rest on any one of them.
+
+### What this means
+
+**The CEG ownership handshake requires the real Steam client** -- specifically
+the `reaper` + `SteamLinuxRuntime_4` + `Proton - Experimental` chain, launched
+by the running client, with the exe in its registered install directory.
+Replicating Steam's *environment* is not sufficient; §1 case `F_steamverb`
+already proved that, and it failed identically to the rest.
+
+Consequences for the mod, in order of how much they cost:
+
+1. **Everything must launch through Steam from here on.** `proton run` against
+   a hard-linked mirror is dead as a way to get a *running game*. It remains
+   fine for the isolated OpenVR/Vulkan harnesses of Exp. 4-6, which never load
+   the game.
+2. **Injection must therefore happen inside a Steam launch**, i.e. a
+   `%command%` wrapper in the app's launch options. The `winmm.dll` shim of
+   Exp. 7 is still the mechanism; what changes is who starts the process.
+3. **Open, and untested:** whether Steam can be made to launch a *mirror*
+   rather than the install. If it cannot, the shim DLL has to sit next to
+   `BlackOps.exe` in the install itself, which is a change to the standing
+   "never modify the Steam install" rule and is the user's call, not ours.
+   Nothing here has been decided.
+
+### Provenance of this run
+
+Run 1 of `steam-launch.sh` **invalidated itself** and is kept as
+`out/steamlaunch-run1-INVALID`: Steam's launch scaffolding matches
+`pgrep -f BlackOps.exe` seconds before the game exists, the watch loop read the
+scaffolding's disappearance as death, broke out early, and its `pkill -9`
+landed at 20:23:44 -- the exact second Steam started the real game. The harness
+killed its own subject and the "reproduction" was an artefact. Fixed in
+`6c6b2de`; run 2 is the one reported here.
+
+Run 2 was interrupted by the operator at ~t=37 s, so the script's own
+post-run bookkeeping (`install_after.txt`, `cfg_after.txt`) never ran; the
+before/after values above were recovered afterwards from the filesystem and
+from Steam's log. The game outlived the interrupt -- it is a child of the Steam
+client, not of the script -- and exited at 20:27:04 on its own or by the
+operator closing it. **Which of those two is not established here**, and it
+does not affect the conclusion: a clean config write plus a fresh `.STEAMSTART`
+means it got past §3 either way.
+
+The seven save games in `players/save/` were byte-compared against the backup
+at `~/.local/share/bo1-players-backup-20260801` afterwards: **all seven
+identical.**
