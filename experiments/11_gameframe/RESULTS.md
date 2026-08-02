@@ -114,16 +114,40 @@ Both are fixed with environment, and `PRESSURE_VESSEL_FILESYSTEMS_RW` /
 **The complete launch option — Steam → Black Ops → Properties → Launch Options:**
 
 ```
-PROTON_USE_WOW64=1 PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc XR_RUNTIME_JSON=/run/host/usr/share/openxr/1/openxr_monado.json %command%
+PROTON_USE_WOW64=1 PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%
 ```
 
-* `PROTON_USE_WOW64=1` — new-WoW64, §2.
-* `PRESSURE_VESSEL_FILESYSTEMS_RW=...monado_comp_ipc` — share monado's socket
-  into the container.
-* `XR_RUNTIME_JSON=/run/host/...` — the host's manifest at the path the
-  container sees it. Its `library_path` is *relative*
-  (`../../../lib/x86_64-linux-gnu/libopenxr_monado.so`), so it resolves to
-  `/run/host/usr/lib/...`, which the table above confirms exists.
+* `PROTON_USE_WOW64=1` — new-WoW64, §2. Nothing to do with OpenXR; without it
+  the 32-bit `vrclient.so` cannot load and `VR_InitInternal2` returns `err=105`.
+* `PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1` — **the supported way** to make
+  the host's OpenXR runtime visible inside the container. pressure-vessel's own
+  help: *"Import OpenXR 1 runtimes from the host system."*
+
+### What this replaced, and why the replacement is better
+
+The first version of this section prescribed two hand-rolled variables instead:
+
+```
+PRESSURE_VESSEL_FILESYSTEMS_RW=/run/user/1000/monado_comp_ipc
+XR_RUNTIME_JSON=/run/host/usr/share/openxr/1/openxr_monado.json
+```
+
+They worked, and the reasoning behind them (§2b) was correct about *what* was
+broken. But they were a workaround for a problem pressure-vessel already
+solves, and both are **Monado-specific**:
+
+* `XR_RUNTIME_JSON` hardcodes a path to Monado's manifest, so it would
+  **override WiVRn** — the runtime the headset actually needs (BAC-282).
+* `PRESSURE_VESSEL_FILESYSTEMS_RW` bind-mounts one named socket, which is
+  Monado's and not WiVRn's.
+
+The import flag imports whatever the *active* runtime is, so it keeps working
+when the runtime changes. Credit where due: WiVRn's own documentation is what
+pointed at it.
+
+§2b's diagnostic table stands unchanged — it is still the measurement that
+identified the container as the problem, and the in-process probe that produced
+it is still the only way to see what the game sees.
 
 Everything else the mod needs lives in the prefix and installs itself. This is
 one line, plainly visible, removed by clearing the field — still a far smaller
