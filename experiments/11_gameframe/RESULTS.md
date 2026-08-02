@@ -324,3 +324,33 @@ culprit.
 `nosubmit.on` is the decisive one and is enabled next. Everything to date has
 assumed the fault is in the frame handoff; that assumption has never actually
 been tested, and this tests it in one run.
+
+### 7d. It is not the frame handoff at all
+
+`nosubmit.on` — every part of the frame work except the `Submit` call itself —
+**still froze**: stage 0, 939 pose ticks, past frame 600.
+
+**With no `IVRCompositor::Submit` at all, the game still wedges.** So the fault
+is not in the handoff: not `Submit`, not the compositor, not xrizer. Every
+hypothesis from the queue lock onward was aimed at the wrong half of the code,
+and this one run retired all of them.
+
+What still runs under `nosubmit=1`, i.e. what is left to blame:
+
+1. `WaitGetPoses` on the render thread (still called — the ticks prove it)
+2. the capture `StretchRect` into the eye textures
+3. **the gate's busy-wait** — 187,641 iterations of `GetData(D3DGETDATA_FLUSH)`
+   per eye, per frame, on the render thread. That hammers DXVK and burns
+   milliseconds where frametime is known to be sensitive. It cannot be the
+   original cause (the freeze predates it) but it is a strong candidate for
+   making things worse, and it should not ship regardless.
+4. the layout transitions and the queue lock
+5. the interop setup itself (shared VkImages, `ID3D9VkInteropDevice`)
+
+Next run has `nolock.on` + `notrans.on` + `nosubmit.on` all set, leaving only
+capture, gate, `WaitGetPoses` and the interop setup. Whatever that does,
+it halves the remainder again.
+
+Reminder of the fixed point: `novr.on` (none of this active, every hook and the
+dual-view render still running) is **stable**. The boundary is somewhere in the
+list above.
