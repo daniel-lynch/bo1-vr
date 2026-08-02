@@ -116,7 +116,22 @@ static bo1vr_VkPhysicalDevice g_vkphys;
 static bo1vr_VkDevice      g_vkdevice;
 static bo1vr_VkQueue       g_vkqueue;
 static uint32_t            g_qindex, g_qfamily;
-static struct eye_target   g_eyes[2];
+/* TWO SETS OF EYE TEXTURES, ALTERNATING PER FRAME.
+ *
+ * With novr.on (submission disabled, every hook still active and the scene
+ * still rendered twice per eye) the game is stable. So the rendering work is
+ * innocent and the fault is in what we hand the compositor.
+ *
+ * The remaining suspect is this: we wrote into the SAME two textures every
+ * frame. Submit is asynchronous -- the compositor may still be reading last
+ * frame's image when the next StretchRect overwrites it. That is consistent
+ * with everything observed: the runtime failing to acquire a swapchain image,
+ * xrizer panicking on the unwrap, and the flashing seen before that.
+ *
+ * Alternating between two sets means nothing is overwritten until at least a
+ * full frame after it was submitted. Costs four textures instead of two. */
+static struct eye_target   g_eyes[2][2];   /* [eye][buffer] */
+static int                 g_buf;          /* which buffer THIS frame uses */
 static uint32_t            g_rw, g_rh;
 
 static LONG g_frames;
@@ -288,44 +303,45 @@ static int interop_init(IDirect3DDevice9 *dev)
         return 0;
     }
 
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 4; i++) {
+        struct eye_target *E = &g_eyes[i >> 1][i & 1];
         /* X8R8G8B8, not A8R8G8B8: the back buffer has an alpha channel whose
          * contents are whatever the game left there, and the compositor would
          * honour it. Forcing opaque here costs nothing and cannot produce a
          * see-through eye. */
         hr = IDirect3DDevice9_CreateTexture(dev, g_rw, g_rh, 1, D3DUSAGE_RENDERTARGET,
                                             D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT,
-                                            &g_eyes[i].tex, NULL);
+                                            &E->tex, NULL);
         if (FAILED(hr)) { glog("CreateTexture eye %d hr=0x%08lx", i, (unsigned long)hr); return 0; }
-        hr = IDirect3DTexture9_GetSurfaceLevel(g_eyes[i].tex, 0, &g_eyes[i].surf);
+        hr = IDirect3DTexture9_GetSurfaceLevel(E->tex, 0, &E->surf);
         if (FAILED(hr)) { glog("GetSurfaceLevel eye %d", i); return 0; }
 
-        hr = IDirect3DTexture9_QueryInterface(g_eyes[i].tex, &IID_ID3D9VkInteropTexture,
-                                              (void **)&g_eyes[i].vktex);
-        if (FAILED(hr) || !g_eyes[i].vktex) {
-            hr = IDirect3DSurface9_QueryInterface(g_eyes[i].surf, &IID_ID3D9VkInteropTexture,
-                                                  (void **)&g_eyes[i].vktex);
+        hr = IDirect3DTexture9_QueryInterface(E->tex, &IID_ID3D9VkInteropTexture,
+                                              (void **)&E->vktex);
+        if (FAILED(hr) || !E->vktex) {
+            hr = IDirect3DSurface9_QueryInterface(E->surf, &IID_ID3D9VkInteropTexture,
+                                                  (void **)&E->vktex);
         }
-        if (FAILED(hr) || !g_eyes[i].vktex) {
+        if (FAILED(hr) || !E->vktex) {
             glog("no ID3D9VkInteropTexture for eye %d (0x%08lx)", i, (unsigned long)hr);
             return 0;
         }
 
-        memset(&g_eyes[i].info, 0, sizeof(g_eyes[i].info));
-        g_eyes[i].info.sType = BO1VR_VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        hr = g_eyes[i].vktex->lpVtbl->GetVulkanImageInfo(g_eyes[i].vktex, &g_eyes[i].image,
-                                                        &g_eyes[i].layout, &g_eyes[i].info);
-        if (FAILED(hr) || !g_eyes[i].image) { glog("no VkImage for eye %d", i); return 0; }
-        if (g_eyes[i].info.extent.width != g_rw || g_eyes[i].info.extent.height != g_rh) {
+        memset(&E->info, 0, sizeof(E->info));
+        E->info.sType = BO1VR_VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        hr = E->vktex->lpVtbl->GetVulkanImageInfo(E->vktex, &E->image,
+                                                        &E->layout, &E->info);
+        if (FAILED(hr) || !E->image) { glog("no VkImage for eye %d", i); return 0; }
+        if (E->info.extent.width != g_rw || E->info.extent.height != g_rh) {
             glog("eye %d VkImage extent %ux%u != requested %ux%u -- the interop struct "
                  "layout is wrong, not just the values", i,
-                 g_eyes[i].info.extent.width, g_eyes[i].info.extent.height, g_rw, g_rh);
+                 E->info.extent.width, E->info.extent.height, g_rw, g_rh);
             return 0;
         }
         glog("eye %d: VkImage=0x%016llx layout=%d %ux%u fmt=%d", i,
-             (unsigned long long)g_eyes[i].image, (int)g_eyes[i].layout,
-             g_eyes[i].info.extent.width, g_eyes[i].info.extent.height,
-             (int)g_eyes[i].info.format);
+             (unsigned long long)E->image, (int)E->layout,
+             E->info.extent.width, E->info.extent.height,
+             (int)E->info.format);
     }
     return 1;
 }
@@ -333,11 +349,12 @@ static int interop_init(IDirect3DDevice9 *dev)
 static void release_eyes(void)
 {
     int i;
-    for (i = 0; i < 2; i++) {
-        if (g_eyes[i].vktex) { g_eyes[i].vktex->lpVtbl->Release(g_eyes[i].vktex); }
-        if (g_eyes[i].surf)  IDirect3DSurface9_Release(g_eyes[i].surf);
-        if (g_eyes[i].tex)   IDirect3DTexture9_Release(g_eyes[i].tex);
-        memset(&g_eyes[i], 0, sizeof(g_eyes[i]));
+    for (i = 0; i < 4; i++) {
+        struct eye_target *E = &g_eyes[i >> 1][i & 1];
+        if (E->vktex) { E->vktex->lpVtbl->Release(E->vktex); }
+        if (E->surf)  IDirect3DSurface9_Release(E->surf);
+        if (E->tex)   IDirect3DTexture9_Release(E->tex);
+        memset(E, 0, sizeof(*E));
     }
 }
 
@@ -596,9 +613,9 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
         hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_resolve, NULL, D3DTEXF_NONE);
         if (SUCCEEDED(hr))
             hr = IDirect3DDevice9_StretchRect(g_dev, g_resolve, &g_crop,
-                                              g_eyes[eye].surf, NULL, D3DTEXF_LINEAR);
+                                              g_eyes[eye][g_buf].surf, NULL, D3DTEXF_LINEAR);
     } else {
-        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye].surf, NULL,
+        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye][g_buf].surf, NULL,
                                           D3DTEXF_LINEAR);
     }
     if (FAILED(hr)) {
@@ -627,30 +644,32 @@ static void submit_eye(int i)
     struct Texture_t tex;
     EVRCompositorError ce;
 
+    struct eye_target *E = &g_eyes[i][g_buf];
+
     sub.aspectMask     = BO1VR_VK_IMAGE_ASPECT_COLOR_BIT;
     sub.baseMipLevel   = 0;
-    sub.levelCount     = g_eyes[i].info.mipLevels;
+    sub.levelCount     = E->info.mipLevels;
     sub.baseArrayLayer = 0;
-    sub.layerCount     = g_eyes[i].info.arrayLayers;
+    sub.layerCount     = E->info.arrayLayers;
 
     /* Exactly the order Proton's own D3D11 path uses
      * (vrcompositor_manual.c load_compositor_texture_dxvk). */
-    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, g_eyes[i].vktex, &sub,
-                                             g_eyes[i].layout,
+    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
+                                             E->layout,
                                              BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     g_vkdev->lpVtbl->FlushRenderingCommands(g_vkdev);
     g_vkdev->lpVtbl->LockSubmissionQueue(g_vkdev);
 
     memset(&vkdata, 0, sizeof(vkdata));
-    vkdata.m_nImage            = g_eyes[i].image;
+    vkdata.m_nImage            = E->image;
     vkdata.m_pDevice           = (struct VkDevice_T *)g_vkdevice;
     vkdata.m_pPhysicalDevice   = (struct VkPhysicalDevice_T *)g_vkphys;
     vkdata.m_pInstance         = (struct VkInstance_T *)g_vkinst;
     vkdata.m_pQueue            = (struct VkQueue_T *)g_vkqueue;
     vkdata.m_nQueueFamilyIndex = g_qfamily;
-    vkdata.m_nWidth            = g_eyes[i].info.extent.width;
-    vkdata.m_nHeight           = g_eyes[i].info.extent.height;
-    vkdata.m_nFormat           = (uint32_t)g_eyes[i].info.format;
+    vkdata.m_nWidth            = E->info.extent.width;
+    vkdata.m_nHeight           = E->info.extent.height;
+    vkdata.m_nFormat           = (uint32_t)E->info.format;
     vkdata.m_nSampleCount      = 1;
 
     tex.handle      = &vkdata;
@@ -664,9 +683,9 @@ static void submit_eye(int i)
                         EVRSubmitFlags_Submit_Default);
 
     g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
-    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, g_eyes[i].vktex, &sub,
+    g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
                                              BO1VR_VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                             g_eyes[i].layout);
+                                             E->layout);
 
     if (ce == EVRCompositorError_VRCompositorError_None) {
         InterlockedIncrement(&g_submitted);
@@ -785,7 +804,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
          * (A proper floating screen in world space is the eventual answer for
          * menus; this at least makes them coherent.) */
         for (i = 0; i < 2; i++) {
-            hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i].surf, NULL,
+            hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i][g_buf].surf, NULL,
                                               D3DTEXF_LINEAR);
             if (FAILED(hr)) break;
         }
@@ -803,7 +822,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
          * nothing. */
         g_flat_frames++;
     } else {
-        hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye].surf, NULL,
+        hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye][g_buf].surf, NULL,
                                           D3DTEXF_LINEAR);
         if (FAILED(hr)) {
             if (n < 3) glog("StretchRect eye %d hr=0x%08lx", g_cur_eye, (unsigned long)hr);
@@ -845,6 +864,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * stuck at stage 3 or 4, so Submit holding DXVK's submission queue lock is
      * not the problem. */
     SetEvent(g_ev_consumed);
+    /* Next frame writes into the other set, so nothing the compositor may
+     * still be reading gets overwritten. */
+    g_buf ^= 1;
     g_stage = 0;
     IDirect3DSurface9_Release(bb);
 
