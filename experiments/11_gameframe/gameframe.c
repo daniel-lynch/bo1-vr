@@ -326,6 +326,52 @@ static void release_eyes(void)
     }
 }
 
+/* ------------------------------------------------------- the frame clock */
+
+/* WaitGetPoses, on a thread WE own.
+ *
+ * It has to be called by somebody: it is what makes an application the focused
+ * scene app, and without it every Submit is rejected with
+ * VRCompositorError_DoNotHaveFocus (101). Measured the hard way -- moving it
+ * off the render thread stopped the hang and turned the headset black, with
+ * "Submit -> 101" on every frame.
+ *
+ * But it must NOT be called on the game's render thread, because it blocks
+ * until the runtime wants the next frame, and when the compositor session goes
+ * away it never returns: the game's main thread parked in futex_wait_multiple
+ * with the audio thread still playing.
+ *
+ * Both facts are satisfied by giving it a thread of its own. If the compositor
+ * stalls, this thread stalls, and the game carries on rendering to the monitor.
+ * The poses it collects are also exactly what the head tracking will read.
+ */
+static struct TrackedDevicePose_t g_rposes[64], g_gposes[64];
+static HANDLE g_pose_thread;
+static volatile LONG g_pose_ticks;
+
+static DWORD WINAPI pose_thread(LPVOID p)
+{
+    (void)p;
+    glog("pose thread up (WaitGetPoses lives here, not on the render thread)");
+    for (;;) {
+        if (!g_comp) break;
+        g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
+        InterlockedIncrement(&g_pose_ticks);
+    }
+    return 0;
+}
+
+static void start_pose_thread(void)
+{
+    DWORD tid;
+    if (g_pose_thread || !g_comp) return;
+    /* Started from the render thread at first frame, never from DllMain:
+     * creating a thread under the loader lock is the deadlock src/dllmain.c
+     * warns about. */
+    g_pose_thread = CreateThread(NULL, 0, pose_thread, NULL, 0, &tid);
+    if (!g_pose_thread) glog("CreateThread for poses failed (err=%lu)", GetLastError());
+}
+
 /* --------------------------------------------------- dual-view capture */
 
 static LONG g_captured;      /* eyes captured during THIS frame by camera.asi */
@@ -563,6 +609,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         if (!vr_init())         { glog("VR init failed -- staying out of the way"); return; }
         if (!interop_init(g_dev)) { glog("interop init failed -- staying out of the way"); return; }
         g_state = 1;
+        start_pose_thread();
         glog("PIPE LIVE: game frames -> compositor (alternate-eye)");
     }
 
@@ -592,8 +639,8 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      *
      * If a real frame clock is wanted later it belongs on a thread of OUR own,
      * never on a thread the game owns. */
-    if (g_comp->GetLastPoses)
-        g_comp->GetLastPoses(rposes, 64, gposes, 64);
+    /* Poses come from our own thread now -- see pose_thread. Nothing on the
+     * game's render thread may block on the compositor. */
 
     hr = IDirect3DSwapChain9_GetBackBuffer(sc, 0, D3DBACKBUFFER_TYPE_MONO, &bb);
     if (FAILED(hr) || !bb) {
@@ -686,7 +733,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld successful eye submits", n, g_submitted);
+        glog("frame %ld: %ld successful eye submits, %ld pose ticks", n, g_submitted, g_pose_ticks);
 }
 
 /* ------------------------------------------------------------------ hooks */
