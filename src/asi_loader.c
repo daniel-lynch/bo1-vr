@@ -12,30 +12,19 @@
 #include "log.h"
 
 #include <stdio.h>
+#include <string.h>
 
-int asi_load_all(HMODULE self)
+/* See the comment in asi_load_all. */
+#define ASI_PLUGIN_DIR "C:\\bo1vr"
+
+/* Scan one directory for *.asi and LoadLibrary each. Returns the count. */
+static int asi_load_dir(const char *dir)
 {
-    char dir[MAX_PATH];
     char pattern[MAX_PATH];
     char full[MAX_PATH];
     WIN32_FIND_DATAA fd;
     HANDLE h;
-    DWORD n;
-    char *slash;
     int loaded = 0;
-
-    n = GetModuleFileNameA(self, dir, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) {
-        LOGE("asi: GetModuleFileNameA failed, err=%lu", GetLastError());
-        return 0;
-    }
-
-    slash = strrchr(dir, '\\');
-    if (!slash) {
-        LOGE("asi: no backslash in module path \"%s\"", dir);
-        return 0;
-    }
-    *slash = '\0';
 
     _snprintf(pattern, MAX_PATH, "%s\\*.asi", dir);
     pattern[MAX_PATH - 1] = '\0';
@@ -43,10 +32,8 @@ int asi_load_all(HMODULE self)
     LOGI("asi: scanning %s", pattern);
 
     h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        LOGI("asi: no .asi plugins found (err=%lu)", GetLastError());
+    if (h == INVALID_HANDLE_VALUE)
         return 0;
-    }
 
     do {
         HMODULE m;
@@ -70,6 +57,48 @@ int asi_load_all(HMODULE self)
     } while (FindNextFileA(h, &fd));
 
     FindClose(h);
+    return loaded;
+}
+
+int asi_load_all(HMODULE self)
+{
+    char dir[MAX_PATH];
+    DWORD n;
+    char *slash;
+    int loaded = 0;
+
+    n = GetModuleFileNameA(self, dir, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        LOGE("asi: GetModuleFileNameA failed, err=%lu", GetLastError());
+        return 0;
+    }
+
+    slash = strrchr(dir, '\\');
+    if (!slash) {
+        LOGE("asi: no backslash in module path \"%s\"", dir);
+        return 0;
+    }
+    *slash = '\0';
+
+    loaded += asi_load_dir(dir);
+
+    /* AND C:\bo1vr. Exp. 9 moved the loader into the prefix's syswow64, because
+     * the game install must stay untouched (Exp. 8 §10: the game only runs when
+     * the Steam client launches it, so the exe has to be exactly what Steam
+     * installed). Our own directory is therefore a SYSTEM directory now, and
+     * dropping gameplay plugins into it would be squalid -- it is shared with
+     * everything else in the prefix.
+     *
+     * C:\bo1vr is inside the same prefix, so it needs no environment variable
+     * (there is none to set: Steam starts the process), it is trivially
+     * reachable from Linux at compatdata/42700/pfx/drive_c/bo1vr/, and it
+     * disappears with the prefix like everything else we install.
+     *
+     * Harmless in the Exp. 7 beside-the-exe placement: the directory simply
+     * does not exist and FindFirstFile returns nothing. */
+    if (_stricmp(dir, ASI_PLUGIN_DIR) != 0)
+        loaded += asi_load_dir(ASI_PLUGIN_DIR);
+
     LOGI("asi: %d plugin(s) loaded", loaded);
     return loaded;
 }
