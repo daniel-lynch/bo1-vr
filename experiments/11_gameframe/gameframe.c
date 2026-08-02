@@ -348,16 +348,52 @@ static void release_eyes(void)
  */
 static struct TrackedDevicePose_t g_rposes[64], g_gposes[64];
 static HANDLE g_pose_thread;
+static HANDLE g_ev_ready, g_ev_consumed;
 static volatile LONG g_pose_ticks;
+static LONG g_skipped;
+
+/* WHY THESE TWO EVENTS EXIST.
+ *
+ * OpenXR requires a strict per-frame sequence: xrWaitFrame, then xrBeginFrame,
+ * then xrEndFrame. xrizer maps WaitGetPoses onto the first and
+ * Submit/PostPresentHandoff onto the last.
+ *
+ * The first version of this pose thread called WaitGetPoses in a bare loop at
+ * its own pace -- measured at 14 ticks by the render thread's frame 1 and 26 by
+ * frame 2, i.e. free-running. The two halves of the frame loop then belonged to
+ * different clocks, the runtime's frame state machine desynced, and OpenXR
+ * started returning ERROR_RUNTIME_FAILURE. xrizer unwraps that:
+ *
+ *   panicked at src/compositor.rs:1185: called `Result::unwrap()` on an `Err`
+ *   value: ERROR_RUNTIME_FAILURE
+ *   panicked at src/compositor.rs:1155: Failed to acquire swapchain image
+ *
+ * and a Rust panic here unwinds into a frame Wine cannot dispatch, so the
+ * process dies -- the "xrizer has crashed and the game froze" report.
+ *
+ * So the calls must be 1:1. They are paired with events rather than by moving
+ * WaitGetPoses back onto the render thread, because that is what caused the
+ * original hang: the render thread must never block on the compositor. The
+ * render thread polls g_ev_ready with a ZERO timeout -- if a frame is not
+ * ready it simply does not submit this time and carries on. If the compositor
+ * stalls, the pose thread stalls alone and the game keeps rendering to the
+ * monitor. */
 
 static DWORD WINAPI pose_thread(LPVOID p)
 {
     (void)p;
-    glog("pose thread up (WaitGetPoses lives here, not on the render thread)");
+    glog("pose thread up: WaitGetPoses here, paired 1:1 with the render thread");
     for (;;) {
         if (!g_comp) break;
         g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
         InterlockedIncrement(&g_pose_ticks);
+        SetEvent(g_ev_ready);
+        /* Wait for the render thread to consume this frame before asking for
+         * another. Without this the loop free-runs and OpenXR's frame state
+         * machine desyncs -- see the comment on g_ev_ready. The timeout means a
+         * render thread that stops submitting (menu, stand-down) cannot wedge
+         * us permanently. */
+        WaitForSingleObject(g_ev_consumed, 500);
     }
     return 0;
 }
@@ -366,6 +402,9 @@ static void start_pose_thread(void)
 {
     DWORD tid;
     if (g_pose_thread || !g_comp) return;
+    g_ev_ready    = CreateEventA(NULL, FALSE, FALSE, NULL);   /* auto-reset */
+    g_ev_consumed = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (!g_ev_ready || !g_ev_consumed) { glog("CreateEvent failed"); return; }
     /* Started from the render thread at first frame, never from DllMain:
      * creating a thread under the loader lock is the deadlock src/dllmain.c
      * warns about. */
@@ -719,10 +758,21 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         }
     }
 
+    /* Submit only if a WaitGetPoses has completed and not yet been consumed.
+     * Zero timeout: this poll never blocks the game. */
+    if (!g_ev_ready || WaitForSingleObject(g_ev_ready, 0) != WAIT_OBJECT_0) {
+        g_skipped++;
+        IDirect3DSurface9_Release(bb);
+        if ((n % 600) == 0)
+            glog("frame %ld: no compositor frame ready, skipped %ld", n, g_skipped);
+        return;
+    }
+
     for (i = 0; i < 2; i++)
         submit_eye(i);
 
     g_comp->PostPresentHandoff();
+    SetEvent(g_ev_consumed);
     IDirect3DSurface9_Release(bb);
 
     /* Flip, and tell camera.asi which eye the NEXT frame belongs to. The eye
@@ -746,9 +796,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld eye submits, %ld pose ticks, %ld flat frames (%ld%%)",
+        glog("frame %ld: %ld submits, %ld ticks, %ld flat (%ld%%), %ld skipped",
              n, g_submitted, g_pose_ticks, g_flat_frames,
-             n ? (g_flat_frames * 100) / n : 0);
+             n ? (g_flat_frames * 100) / n : 0, g_skipped);
 }
 
 /* ------------------------------------------------------------------ hooks */
