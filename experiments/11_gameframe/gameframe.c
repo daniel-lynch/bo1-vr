@@ -152,6 +152,9 @@ static LONG  g_gate_max_spins;
 /* Bisect switches, declared here because interop_init (above the definitions)
  * now consults them too. */
 static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
+static volatile LONG g_gd_calls;
+static volatile LONG g_gd_last;
+static volatile LONG g_gd_sfalse, g_gd_sok, g_gd_other;
 static void read_opts(void);
 static int  opt(const char *name);
 static IDirect3DSurface9 *g_probe_rt;   /* probe.on / probe2.on target */
@@ -603,6 +606,8 @@ static void dump_game_fence(void)
     if (!size || size > 64) { glog("FENCE: implausible ring size %lu", (unsigned long)size); return; }
 
     waited = (index + size - 1) % size;
+    glog("FENCE: GetData calls=%ld  last hr=0x%08lx  (S_FALSE=%ld S_OK=%ld other=%ld)",
+         g_gd_calls, (unsigned long)(DWORD)g_gd_last, g_gd_sfalse, g_gd_sok, g_gd_other);
     glog("FENCE: ring size=%lu index=%lu -> game is polling slot %lu",
          (unsigned long)size, (unsigned long)index, (unsigned long)waited);
 
@@ -664,6 +669,61 @@ static void probe_own_fence(void)
         glog("FENCE: OUR fresh query did NOT retire in %d ms (hr=0x%08lx) -- "
              "nothing is completing; the stall is below D3D9", i, (unsigned long)hr);
     IDirect3DQuery9_Release(q);
+}
+
+
+/* WHAT IS THE GAME'S GetData ACTUALLY RETURNING?
+ *
+ * The game's loop at 0x6ebb40 exits only on S_OK or D3DERR_DEVICELOST. DXVK's
+ * D3D9Query::GetData has a THIRD outcome: d3d9_query.cpp returns
+ * D3DERR_INVALIDCALL when the underlying vkGetEventStatus reports neither SET
+ * nor RESET. That value is not in the game's exit set, so it would spin
+ * forever on it -- a completely different bug from "the fence never signals",
+ * with a completely different fix, and the two are indistinguishable from
+ * outside.
+ *
+ * So hook GetData itself. The vtable belongs to DXVK and is shared by every
+ * D3D9 query including our own, which is fine: we record the last HRESULT and
+ * a call count, and the watchdog prints them when it fires. Cheap, on the
+ * right thread, and it settles the question in one run. */
+typedef HRESULT (WINAPI *pfn_getdata)(IDirect3DQuery9 *, void *, DWORD, DWORD);
+static pfn_getdata real_getdata;
+
+static HRESULT WINAPI my_getdata(IDirect3DQuery9 *q, void *data, DWORD size, DWORD flags)
+{
+    HRESULT hr = real_getdata(q, data, size, flags);
+    InterlockedIncrement(&g_gd_calls);
+    g_gd_last = (LONG)hr;
+    if (hr == S_FALSE)      InterlockedIncrement(&g_gd_sfalse);
+    else if (hr == S_OK)    InterlockedIncrement(&g_gd_sok);
+    else                    InterlockedIncrement(&g_gd_other);
+    return hr;
+}
+
+static void hook_query_getdata(void)
+{
+    static int done;
+    DWORD size, q, *ring;
+    void **vt;
+
+    if (done) return;
+    if (!addr_ok((void *)GAME_RING_SIZE, 4)) return;
+    size = *(volatile DWORD *)GAME_RING_SIZE;
+    if (!size || size > 64) return;
+    ring = (DWORD *)GAME_RING_BASE;
+    if (!addr_ok(ring, size * 4)) return;
+    q = ring[0];
+    if (!q || !addr_ok((void *)q, 4)) return;      /* not created yet */
+
+    done = 1;
+    vt = *(void ***)q;
+    if (!addr_ok(vt, 8 * sizeof(void *))) { glog("GETDATA: query vtable unreadable"); return; }
+    if (MH_CreateHook(vt[7], (void *)my_getdata, (void **)&real_getdata) == MH_OK &&
+        MH_EnableHook(vt[7]) == MH_OK)
+        glog("GETDATA: hooked IDirect3DQuery9::GetData (vt[7]=%p) on the game's fence",
+             vt[7]);
+    else
+        glog("GETDATA: failed to hook vt[7]=%p", vt[7]);
 }
 
 static void freeze_autopsy(void)
@@ -1185,6 +1245,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
     start_watchdog();
     read_opts();
     g_render_tid = GetCurrentThreadId();     /* whoever presents IS the render thread */
+    hook_query_getdata();
 
     if (g_state < 0 || !g_dev)
         return;
@@ -1613,6 +1674,27 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
     if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) {
         glog("MH_Initialize failed (%d)", (int)st);
         return TRUE;
+    }
+    /* DXVK reads its debug env at DxvkInstance creation, which happens INSIDE
+     * the first Direct3DCreate9 -- so setting it here, while we arm that hook,
+     * is still early enough. There is no launch environment to set under a
+     * Steam launch (Exp. 9), and this is the only lever we have.
+     *
+     * DXVK_DEBUG=hang enables VK_KHR_device_fault and
+     * VK_NV_device_diagnostic_checkpoints, and makes the submission queue print
+     * hang info when a semaphore wait does not complete -- exactly our state. */
+    if (opt("dxvkhang.on")) {
+        char lp[MAX_PATH];
+        DWORD ln;
+        SetEnvironmentVariableA("DXVK_DEBUG", "hang");
+        SetEnvironmentVariableA("DXVK_LOG_LEVEL", "info");
+        ln = GetTempPathA(MAX_PATH - 16, lp);
+        if (ln && ln < MAX_PATH - 16) {
+            lstrcatA(lp, "dxvklog");
+            CreateDirectoryA(lp, NULL);
+            SetEnvironmentVariableA("DXVK_LOG_PATH", lp);
+            glog("dxvkhang.on: DXVK_DEBUG=hang, DXVK logs -> %s", lp);
+        }
     }
     if (MH_CreateHook(fn, (void *)my_create9, (void **)&real_create9) == MH_OK &&
         MH_EnableHook(fn) == MH_OK)

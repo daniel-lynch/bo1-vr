@@ -619,3 +619,82 @@ Present from the back buffer -- which is exactly what `probe.on` does safely --
 and obtain stereo by alternating eyes across frames rather than by capturing
 twice within one. That trades the dual-view latency win for a configuration
 with direct evidence of stability behind it, and it is testable unattended.
+
+## 12. Two independent triggers, and the DXVK mechanism
+
+### Rates, not anecdotes
+
+Everything up to §11 rested on one or two runs, and the freeze is stochastic.
+`freezeloop.sh` repeats a configuration and reports a rate; `freezerun.sh` now
+marks a run INVALID if the plugin never logged `BISECT`, because two runs where
+Steam simply refused to relaunch had been silently counted as passes.
+
+| configuration | froze |
+|---|---|
+| baseline (everything on) | **3 / 3** (23, 24, 24 s) |
+| `nocap`+`nogate` — AER at Present, no gate spin, Submit ON | **3 / 3** |
+| `nocap`+`nogate`+`notrans` | **2 / 2** |
+| `nocap`+`nogate`+`nolock` | 1 / 2 |
+| `nocap`+`nogate`+**`nosubmit`** | **0 / 1** (8 400 frames) |
+| `probe` — one StretchRect at Present, no VR | 0 / 1 |
+| `probe2` — the same copy mid-scene, no VR | 1 / 2 |
+
+**There are two independent sufficient triggers**, and each freezes on its own:
+
+1. **The mid-scene resolve.** Reproducible with no VR code running at all.
+2. **`IVRCompositor::Submit`.** With mid-scene capture gone, removing the layout
+   transitions or the queue lock changes nothing, but removing `Submit` stops
+   the freeze dead.
+
+Removing both is the only configuration that survives -- and it is useless as a
+product, because it puts nothing in the headset.
+
+### What GetData actually returns
+
+DXVK's `D3D9Query::GetData` can return `D3DERR_INVALIDCALL` (when
+`vkGetEventStatus` reports neither SET nor RESET), and the game's loop exits
+only on `S_OK`/`D3DERR_DEVICELOST` -- so that value would spin forever, a
+different bug with a different fix. Hooking the game's own `GetData` settles it:
+
+```
+FENCE: GetData calls=21098  last hr=0x00000001  (S_FALSE=19937 S_OK=1161 other=0)
+```
+
+`S_FALSE`. The query is issued and simply never signals, so the failure is a
+submitted command list that never retires -- not an error code the game can't
+handle.
+
+### The mechanism, from DXVK source (v3.0.2, matching Proton Experimental)
+
+* `StretchRect` from a 4x MSAA source to a same-size 1x destination takes the
+  `fastPath` and emits `ctx->resolveImage`.
+* `resolveImageInline` -- the "fold the resolve into the live render pass"
+  path -- requires `GpRenderPassSecondaryCmd`, set only when
+  `perfHints().preferRenderPassOps`, which is `tilerMode`: Turnip, Qualcomm,
+  MoltenVK, PanVK, ARM, V3DV, Imagination. **On NVIDIA it is never taken.**
+* So every mid-scene capture instead calls `endCurrentPass(true)` --
+  **tearing down the game's live render pass** -- and emits a dedicated resolve
+  render pass. Present-time capture avoids all of this: the back buffer is not
+  multisampled, so it is a plain `copyImage` with no live pass to tear down.
+
+That is exactly the measured split between `probe` and `probe2`.
+
+* `D3D9DeviceEx::End` latches a stall flag (`m_stallFlag |= ...`, never
+  cleared), so after ~16-32 frames a one-frame-latency fence performs an
+  unconditional `ExecuteFlush` on every Issue. **"Recorded but never submitted"
+  is therefore not reachable** -- which rules out the lost-flush reading.
+
+### A correction to §11
+
+§11 read the thread dump as "every DXVK worker idle, nothing pending". That was
+wrong about the important one. `dxvk-queue` is `DxvkSubmissionQueue::
+finishCmdLists`; when idle it waits on a condition variable (a futex), and when
+a submission is outstanding it calls `vkWaitSemaphores`, which on the NVIDIA
+driver blocks in `poll()`. It was in `poll()`. **It was not idle -- it was
+waiting on a submission that never completed**, which is the same conclusion the
+`S_FALSE` measurement reaches independently.
+
+`DXVK_DEBUG=hang` was enabled from inside the plugin (set before the first
+`Direct3DCreate9`, since a Steam launch has no environment to set).
+`VK_KHR_device_fault` and `VK_NV_device_diagnostic_checkpoints` both came up,
+but no hang report was printed during a 90 s freeze.
