@@ -415,3 +415,68 @@ All three bisect switches are removed. The autopsy does not need them, and the
 real configuration is the one worth diagnosing: full pipeline, stereo, a picture
 in the headset. If it freezes, the log names the module. If it does not, the
 playtest was still a stereo validation rather than a black screen.
+
+## 9. The freeze reproduced without a headset, and cornered
+
+Two things made this session's progress possible, and neither was a fix.
+
+**1. There is a second OpenXR runtime on this machine.** `monado.service` is
+socket-activated and running with a **Simulated HMD**; `~/.config/openxr/1/` is
+empty, so WiVRn is never the loader's default and `/etc/xdg/openxr/1/` resolves
+to the system Monado. Whenever WiVRn's server is not up, sessions land there
+automatically -- Steam's log has caught it (`Failed to connect to socket
+/run/user/1000/wivrn/comp_ipc`). That is a hazard for headset runs, but it also
+means **the whole pipeline can be exercised with no headset and no human**, and
+a freeze trial now costs ~90 seconds instead of a playtest.
+
+**2. The autopsy named the freeze.** Reproduced on the first unattended launch:
+
+```
+WATCHDOG: no frame for 3 s, stuck at stage 0, pose ticks 289
+AUTOPSY: 31 other threads; render thread is 416
+AUTOPSY: tid 416 [RENDER] eip=7bf1d410 ntdll.dll+0xd410   <- ZwDelayExecution
+```
+
+`ZwDelayExecution` is `Sleep`, at the same EIP **and the same ESP** 15 s apart.
+Reading that thread's stack out of `/proc/<pid>/mem` while it was still frozen
+gave 292 bytes -- a shallow stack, `BlackOps.exe+0xaae6b` calling Sleep beneath
+the thread trampoline at `+0x42fe23`. **That is a worker idling in its
+wait-for-work loop, not a render call chain.** The main thread (tid 348) is
+blocked in `WaitForSingleObject` at `BlackOps.exe+0x347ab`. Every other game
+thread is parked; every DXVK thread is in a condition-variable wait; Monado is
+alive and still spinning (`Frame late by 252249ms`, no `END_SESSION`).
+
+So the freeze is **the game's own main/render handshake deadlocking**, with the
+compositor healthy. Not a hang inside anything we call.
+
+### A bug in the instrument, which hid the answer
+
+The first autopsy printed no stack at all for the render thread. It read a flat
+1 KB from ESP, and `ReadProcessMemory` fails the WHOLE call if any part of the
+range is unreadable -- a thread parked near the top of its stack has less than
+that left before the guard page. It silently blanked precisely the threads the
+autopsy exists to look at: the idle ones. Now clamped via `VirtualQuery`.
+
+### The bisect, run unattended, four trials in twenty minutes
+
+| switch | what it removes | result |
+|---|---|---|
+| `nosubmit` | `IVRCompositor::Submit` entirely | **FROZE** |
+| `nowait` | `WaitGetPoses` on the render thread | **FROZE** (42 s, 121 ticks) |
+| `nogate` | the 187k-spin event-query gate | **FROZE** (25 s, 307 ticks) |
+| `nocap` | the capture `StretchRect`s | **FROZE** (25 s, 282 ticks) |
+| `novk` | **the DXVK Vulkan interop device** | **SURVIVED 150 s, 0 watchdog fires** |
+
+No single per-frame operation is necessary for the freeze. `novr.on` stops it
+completely. The one thing every freezing configuration shares and every stable
+one lacks is `interop_init` -- `QueryInterface(IID_ID3D9VkInteropDevice)`,
+`GetVulkanHandles`, `GetSubmissionQueue`, and the four exported eye textures.
+
+In the `novk` run OpenVR was fully up and the capture `StretchRect`s were still
+being issued (failing harmlessly, `hr=0x8876086c`) -- so this is also an
+independent second confirmation that neither OpenVR nor the capture is the
+cause.
+
+**Next split is inside `interop_init`:** the interop handles alone, versus the
+exported render targets alone. That is one more unattended trial, not a
+playtest.

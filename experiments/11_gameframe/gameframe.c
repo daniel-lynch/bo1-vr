@@ -554,11 +554,32 @@ static void freeze_autopsy(void)
                         t[n].esp = ctx.Esp;
                         t[n].ebp = ctx.Ebp;
                         t[n].ok  = 1;
-                        got = 0;
-                        if (ReadProcessMemory(GetCurrentProcess(),
-                                              (LPCVOID)(uintptr_t)ctx.Esp,
-                                              t[n].stack, sizeof(t[n].stack), &got))
-                            t[n].stack_n = (int)(got / sizeof(DWORD));
+                        /* CLAMP TO THE END OF THE STACK REGION.
+                         *
+                         * The first version read a flat 1 KB from ESP, and
+                         * ReadProcessMemory fails the WHOLE call if any part of
+                         * the range is unreadable. A thread parked near the top
+                         * of its stack has less than 1 KB left before the guard
+                         * page, so it got zero bytes and printed no frames at
+                         * all -- and that is exactly the state an idle thread
+                         * waiting for work is in. It silently blanked the one
+                         * thread the autopsy exists to look at. */
+                        {
+                            MEMORY_BASIC_INFORMATION smbi;
+                            SIZE_T want = sizeof(t[n].stack);
+                            if (VirtualQuery((LPCVOID)(uintptr_t)ctx.Esp, &smbi,
+                                             sizeof(smbi))) {
+                                SIZE_T avail = (SIZE_T)((uintptr_t)smbi.BaseAddress
+                                             + smbi.RegionSize - ctx.Esp);
+                                if (avail < want) want = avail;
+                            }
+                            got = 0;
+                            if (want >= sizeof(DWORD) &&
+                                ReadProcessMemory(GetCurrentProcess(),
+                                                  (LPCVOID)(uintptr_t)ctx.Esp,
+                                                  t[n].stack, want, &got))
+                                t[n].stack_n = (int)(got / sizeof(DWORD));
+                        }
                     }
                     ResumeThread(th);        /* before ANY logging. see above. */
                 }
@@ -747,6 +768,9 @@ static void setup_crop(UINT sw, UINT sh)
  *
  * StretchRect does the MSAA resolve and the downscale to the per-eye size in
  * one call, exactly as the AER path did. */
+static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk;
+static void read_opts(void);
+
 __declspec(dllexport) void bo1vr_capture_eye(int eye)
 {
     IDirect3DSurface9 *rt = NULL;
@@ -754,6 +778,15 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
 
     if (g_state != 1 || !g_dev || eye < 0 || eye > 1)
         return;                               /* not up yet -- first frames */
+    if (!g_vkdev) return;                     /* novk.on: no interop, no capture */
+
+    /* nocap.on: everything else stays -- interop, textures, transitions,
+     * Submit -- but no D3D9 work is issued from the camera hook. It is the
+     * last cut available before novr.on, and it separates "the capture
+     * StretchRects wedge the device" from "merely having the interop device
+     * and its textures alive does". */
+    read_opts();
+    if (g_nocap) return;
 
     if (FAILED(IDirect3DDevice9_GetRenderTarget(g_dev, 0, &rt)) || !rt)
         return;
@@ -831,7 +864,23 @@ static int opt(const char *name)
     lstrcatA(p, name);
     return GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES;
 }
-static int g_opts_read, g_nolock, g_notrans, g_nosubmit;
+
+/* Read once, from whichever comes first -- do_frame calls this BEFORE
+ * WaitGetPoses, which submit_eye is too late for. */
+static void read_opts(void)
+{
+    if (g_opts_read) return;
+    g_opts_read = 1;
+    g_nolock   = opt("nolock.on");
+    g_notrans  = opt("notrans.on");
+    g_nosubmit = opt("nosubmit.on");
+    g_nogate   = opt("nogate.on");
+    g_nowait   = opt("nowait.on");
+    g_nocap    = opt("nocap.on");
+    g_novk     = opt("novk.on");
+    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d",
+         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk);
+}
 
 static void submit_eye(int i)
 {
@@ -842,15 +891,8 @@ static void submit_eye(int i)
 
     struct eye_target *E = &g_eyes[i][g_buf];
 
-    if (!g_opts_read) {
-        g_opts_read = 1;
-        g_nolock   = opt("nolock.on");
-        g_notrans  = opt("notrans.on");
-        g_nosubmit = opt("nosubmit.on");
-        if (g_nolock || g_notrans || g_nosubmit)
-            glog("BISECT: nolock=%d notrans=%d nosubmit=%d",
-                 g_nolock, g_notrans, g_nosubmit);
-    }
+    read_opts();
+    if (!g_vkdev) return;                     /* novk.on: nothing to submit */
 
     sub.aspectMask     = BO1VR_VK_IMAGE_ASPECT_COLOR_BIT;
     sub.baseMipLevel   = 0;
@@ -878,7 +920,7 @@ static void submit_eye(int i)
      * codebase that has already produced several. If the budget expires we
      * submit anyway and count it: a stale frame is a far better failure than a
      * frozen game, and the counter turns "is this the race?" into a number. */
-    if (E->q) {
+    if (E->q && !g_nogate) {
         int spins = 0;
         while (IDirect3DQuery9_GetData(E->q, NULL, 0, D3DGETDATA_FLUSH) == S_FALSE) {
             if (++spins > 200000) { g_gate_timeouts++; break; }
@@ -954,6 +996,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * is enabled cannot be tested against a known-good run, and this one gets
      * exercised on the fakegame bench precisely because vr_init fails there. */
     start_watchdog();
+    read_opts();
     g_render_tid = GetCurrentThreadId();     /* whoever presents IS the render thread */
 
     if (g_state < 0 || !g_dev)
@@ -962,7 +1005,12 @@ static void do_frame(IDirect3DSwapChain9 *sc)
     if (g_state == 0) {
         g_state = -1;                       /* latch: try once, never per-frame */
         if (!vr_init())         { glog("VR init failed -- staying out of the way"); return; }
-        if (!interop_init(g_dev)) { glog("interop init failed -- staying out of the way"); return; }
+        /* novk.on keeps OpenVR (session, compositor, xrizer, monado) and drops
+         * ONLY the DXVK Vulkan interop device and its textures. Every
+         * per-frame switch has now failed to stop the freeze on its own while
+         * novr.on stops it completely, so what is left to test is the setup
+         * that all of those configurations share. This splits it in two. */
+        if (!g_novk && !interop_init(g_dev)) { glog("interop init failed -- staying out of the way"); return; }
         g_state = 1;
         start_pose_thread();
         glog("PIPE LIVE: game frames -> compositor (alternate-eye)");
@@ -1095,7 +1143,8 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * reported, reasoned about, or fixed upstream. The watchdog will name it if
      * it happens, and the stand-down backoff still applies. */
     g_stage = 2;
-    g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
+    if (!g_nowait)
+        g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
     InterlockedIncrement(&g_pose_ticks);
 
     g_stage = 2;
