@@ -152,6 +152,8 @@ static LONG  g_gate_max_spins;
 /* Bisect switches, declared here because interop_init (above the definitions)
  * now consults them too. */
 static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
+static int g_nowaitlock;            /* nowaitlock.on: restore the racy order */
+static LONG g_waitlocks;            /* proof the lock around WaitGetPoses ran */
 static volatile LONG g_gd_calls;
 static volatile LONG g_gd_last;
 static volatile LONG g_gd_sfalse, g_gd_sok, g_gd_other;
@@ -1096,6 +1098,9 @@ __declspec(dllexport) int bo1vr_get_eye_fov(int eye, float *tanx, float *tany)
  *   nolock.on    skip LockSubmissionQueue/ReleaseSubmissionQueue around Submit
  *   notrans.on   skip the image layout transitions
  *   nosubmit.on  do everything except the actual IVRCompositor::Submit
+ *   nowaitlock.on  give up DXVK's submission lock around WaitGetPoses again,
+ *                  i.e. put back the unsynchronised vkQueueSubmit that §13
+ *                  identified as trigger 2. Present only to A/B the fix.
  *
  * Each is a file in C:\bo1vr. If the game stops freezing with one of them
  * present, that part is the culprit. */
@@ -1125,8 +1130,9 @@ static void read_opts(void)
     g_noq      = opt("noq.on");
     g_probe    = opt("probe.on");
     g_probe2   = opt("probe2.on");
-    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d",
-         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2);
+    g_nowaitlock = opt("nowaitlock.on");
+    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d",
+         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock);
 }
 
 static void submit_eye(int i)
@@ -1390,9 +1396,62 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * than not failing in one it does not, because only the former can be
      * reported, reasoned about, or fixed upstream. The watchdog will name it if
      * it happens, and the stand-down backoff still applies. */
+    /* HOLD DXVK'S SUBMISSION QUEUE LOCK ACROSS WaitGetPoses.
+     *
+     * This is not a guess. Read from the two sources, at the exact revisions
+     * running here (xrizer be664bb, Monado e26a272c1):
+     *
+     *   xrizer Compositor::WaitGetPoses, with the DEFAULT timing mode
+     *   (Implicit), calls PostPresentHandoff() itself -> FrameController::
+     *   end_frame -> xrEndFrame;
+     *
+     *   Monado's client_vk_compositor_layer_commit -> submit_fence ->
+     *   vk_create_and_submit_fence_native, which does
+     *
+     *       os_mutex_lock(&vk->queue_mutex);
+     *       vkQueueSubmit(vk->queue, 0, NULL, fence);
+     *       os_mutex_unlock(&vk->queue_mutex);
+     *
+     *   and `vk->queue` is OUR queue -- xrizer's VulkanData::
+     *   session_create_info hands xrCreateSession the device, queue family and
+     *   queue index taken straight out of VRVulkanTextureData_t, i.e.
+     *   ID3D9VkInteropDevice::GetSubmissionQueue's.
+     *
+     * So every frame there is a vkQueueSubmit on DXVK's queue, serialised
+     * against Monado's own mutex and NOTHING ELSE. VkQueue is an externally
+     * synchronised object: concurrent vkQueueSubmit from two threads is
+     * undefined behaviour, and DXVK's submission thread is the other thread.
+     * Submit itself is already inside LockSubmissionQueue (submit_eye), which
+     * is why removing the transitions or the lock changed nothing -- the
+     * unsynchronised call was never in the part being bisected. It is in
+     * WaitGetPoses.
+     *
+     * That also explains the one configuration that survived: with
+     * nosubmit.on, xrizer never runs initialize_real_session, the frame
+     * controller stays None, PostPresentHandoff returns at "no frame
+     * controller", and the foreign vkQueueSubmit never happens at all. Submit
+     * is not the trigger because of what it hands over -- it is the trigger
+     * because it is what BINDS Monado's client compositor to DXVK's queue.
+     *
+     * LockSubmissionQueue is DxvkDevice::lockSubmission(): drain the pending
+     * submissions, then take the same mutex the submission thread holds around
+     * vkQueueSubmit. Held here it makes Monado's fence submit mutually
+     * exclusive with DXVK's, which is all the Vulkan spec asks for.
+     *
+     * Cost: DXVK cannot submit while we are blocked in xrWaitFrame. The game's
+     * render thread is this thread, so it is not producing work meanwhile;
+     * what it buys is bounded and measured below (g_waitlocks in the frame
+     * line proves this ran -- a silent no-op here would look exactly like a
+     * pass, which is how three earlier instruments in this project lied).
+     *
+     * nowaitlock.on restores the old, racy order for an A/B. */
     g_stage = 2;
-    if (!g_nowait)
+    if (!g_nowait) {
+        int locked = (!g_nowaitlock && g_vkdev != NULL);
+        if (locked) { g_vkdev->lpVtbl->LockSubmissionQueue(g_vkdev); g_waitlocks++; }
         g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
+        if (locked) g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
+    }
     InterlockedIncrement(&g_pose_ticks);
 
     g_stage = 2;
@@ -1445,9 +1504,9 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts",
+        glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts, %ld waitlocks",
              n, g_submitted, g_pose_ticks, g_flat_frames, g_skipped,
-             g_gate_max_spins, g_gate_timeouts);
+             g_gate_max_spins, g_gate_timeouts, g_waitlocks);
 }
 
 /* ------------------------------------------------------------------ hooks */

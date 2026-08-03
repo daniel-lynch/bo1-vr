@@ -698,3 +698,155 @@ waiting on a submission that never completed**, which is the same conclusion the
 `Direct3DCreate9`, since a Steam launch has no environment to set).
 `VK_KHR_device_fault` and `VK_NV_device_diagnostic_checkpoints` both came up,
 but no hang report was printed during a 90 s freeze.
+
+---
+
+## 13. Trigger 2, fixed: an unsynchronised `vkQueueSubmit` on DXVK's queue, issued from inside `WaitGetPoses`
+
+`VkQueue` is an **externally synchronised** object. Two threads may not call
+`vkQueueSubmit` on the same queue at the same time, and nothing in Vulkan
+detects it if they do -- on this driver the observable result is a submission
+that never retires, which is precisely the `S_FALSE` forever / `dxvk-queue`
+parked in `vkWaitSemaphores` picture §12 measured.
+
+We were doing exactly that, once per frame, and not in the code §12 was
+bisecting.
+
+### The path, read from source at the revisions actually installed
+
+xrizer `be664bb`, Monado `21.0.0+git2905.e26a272c1`, DXVK `v3.0.2`.
+
+1. `VulkanData::session_create_info` (xrizer `src/graphics_backends/vulkan.rs`)
+   hands `xrCreateSession` the `device`, `queue_family_index` and a
+   `queue_index` derived by matching `get_device_queue` against the queue in
+   `VRVulkanTextureData_t`. **That queue is ours** --
+   `ID3D9VkInteropDevice::GetSubmissionQueue`'s, i.e. DXVK's.
+
+2. `Compositor::WaitGetPoses` (`src/compositor.rs`), in the **default**
+   `EVRCompositorTimingMode::Implicit`, calls `self.PostPresentHandoff()`
+   itself -> `FrameController::end_frame` -> `xrEndFrame`.
+
+3. Monado `client_vk_compositor_layer_commit` -> `submit_fence` ->
+   `vk_create_and_submit_fence_native` (`src/xrt/auxiliary/vk/vk_sync_objects.c`):
+
+   ```c
+   os_mutex_lock(&vk->queue_mutex);
+   ret = vk->vkQueueSubmit(vk->queue, 0, NULL, fence);   /* our queue */
+   os_mutex_unlock(&vk->queue_mutex);
+   ```
+
+   An empty submit whose only job is to signal an exportable fence, guarded by
+   **Monado's own mutex and nothing else**.
+
+4. Meanwhile DXVK's `dxvk-submit` thread submits under `m_mutexQueue`
+   (`DxvkSubmissionQueue::submitCmdLists`), which is the mutex
+   `LockSubmissionQueue` takes -- `D3D9VkInteropDevice::LockSubmissionQueue` ->
+   `DxvkDevice::lockSubmission` -> `synchronize()` + `lockDeviceQueue()`.
+
+Two mutexes, one queue. `submit_eye` already held DXVK's for the duration of
+`Submit`, so xrizer's own copy `queue_submit` was safe. The fence submit is in
+`WaitGetPoses`, which was never inside anything.
+
+### Why this explains every row of §12's table, including the one that mattered
+
+| §12 row | why |
+|---|---|
+| `nocap`+`nogate` froze 3/3 | Submit on -> real session bound to DXVK's queue -> a foreign `vkQueueSubmit` every frame |
+| `+notrans` 2/2, `+nolock` 1/2 | both only touch **our** calls; the unsynchronised one was somewhere else entirely |
+| `+nosubmit` 0/1 | with no `Submit`, xrizer never runs `initialize_real_session`, the frame controller stays `None`, `PostPresentHandoff` returns at "no frame controller", and **the foreign submit never happens at all** |
+
+That last line is the whole answer to "why is `Submit` a trigger when
+`nosubmit` still does the transitions, the flush and the lock". `Submit` is not
+the trigger because of what it hands over. **It is the trigger because it is
+what BINDS Monado's client compositor to DXVK's queue.** Everything after the
+first `Submit` is per-frame consequence.
+
+### The fix
+
+Hold DXVK's submission lock across `WaitGetPoses`, the same way `submit_eye`
+already holds it across `Submit`. Ten lines. `nowaitlock.on` restores the racy
+order for an A/B, and `g_waitlocks` is printed in the frame line so a silent
+no-op cannot masquerade as a pass -- three instruments in this project have
+done exactly that.
+
+| configuration | froze |
+|---|---|
+| `nocap`+`nogate`+**`nowaitlock`** (control: the racy order, today's build) | **3 / 3** (28, 25, 24 s) |
+| `nocap`+`nogate` (**lock held across `WaitGetPoses`**) | **0 / 8** (150 s each) |
+| full config (mid-scene resolve back on) + the fix | 1 / 3 (37 s) |
+
+The control is not decoration. A day had passed and Monado had been up for 27 h;
+re-measuring the old configuration against the new binary is what makes 0/8
+mean something, and it came back at exactly the documented 3/3 in exactly the
+documented 24-28 s window.
+
+A ninth fix run came back INVALID -- Steam declined to relaunch and the plugin
+never logged `BISECT`. It is counted neither way. That guard is the one §12
+added after two such runs had been silently scored as passes, and it is still
+earning its place.
+
+Positive proof the passes were real work, from the last frame line of a
+surviving run:
+
+```
+frame 7800: 15600 submits, 7800 ticks, 0 flat, 0 skipped, gate max 0 spins, 0 timeouts, 7800 waitlocks
+```
+
+7800 frames, **15600 successful `Submit`s** (two per frame, none rejected),
+7800 locks taken. Not a run that quietly stopped submitting.
+
+### The third row is the two-trigger model confirming itself
+
+With the fix in and the mid-scene MSAA resolve back on, the full configuration
+falls from 3/3 to 1/3 -- which is trigger 1's own rate, the same 1-in-2 to
+1-in-3 that `probe2` showed in §11 with no VR code running at all. The 3/3
+baseline was the two triggers **summed**. Removing one leaves the other, at its
+own rate, which is what §12 predicted and is now measured rather than argued.
+
+### Verified vs inferred
+
+* **VERIFIED**: the source path in steps 1-4 (read at the installed revisions);
+  that `LockSubmissionQueue` is the mutex `dxvk-submit` holds around
+  `vkQueueSubmit`/`vkQueuePresentKHR`; that the lock is taken once per frame in
+  the fixed build; the three rates above.
+* **INFERRED**: that the concurrent `vkQueueSubmit` is what loses the
+  submission. Nothing prints when two threads race an externally synchronised
+  object -- there is no error code and no validation layer in this stack. The
+  argument is that the spec forbids it, that it is the only unsynchronised
+  queue access left in the frame, that serialising it takes the freeze from
+  3/3 to 0/8, and that it accounts for `nosubmit`'s survival, which no previous
+  theory did.
+
+### The leading hypothesis going in was wrong, and so were the other candidates
+
+The brief's ranked list was: DXVK waiting on an external/imported semaphore for
+an exported eye image that never signals; too few eye images in the round
+robin; xrizer/Monado never releasing the image. **All three are refuted.**
+Monado's client compositor does not import a semaphore from us -- it *exports*
+a fence it submits itself, and the swapchain images it copies into are its own.
+DXVK's wait is on its own timeline semaphore for its own submission; that
+submission is lost, not blocked. Doubling the eye images (`g_buf`) or chasing
+image release would have changed nothing, because the image was never the
+subject: **the queue was.**
+
+### Cost, and what is left
+
+The lock is now held across a call that blocks (`xrWaitFrame`), so DXVK cannot
+submit while we wait for the runtime. That is the one thing to watch, and it is
+not visible yet: 7800 frames per 150 s run, which includes launch and level
+load, so ≥52 fps average with the lock taken every frame. If it ever does bite,
+the principled version is `SetExplicitTimingMode(Explicit_ApplicationPerforms-`
+`PostPresentHandoff)` -- xrizer honours it (`compositor.rs`, the
+`timing_mode` check in `WaitGetPoses`) -- and then calling
+`SubmitExplicitTimingData` / `PostPresentHandoff` ourselves, under the lock,
+around the two `Submit`s. That moves the foreign submit inside a lock we hold
+for microseconds instead of milliseconds, and `SubmitExplicitTimingData`
+returning `None` instead of `RequestFailed` is a free proof that the mode
+actually took.
+
+**Trigger 1 is now the only thing standing between this and a playable build**,
+at 1/3. §12 named its mechanism (`resolveImageInline` needs `tilerMode`, NVIDIA
+never takes it, so every mid-scene MSAA `StretchRect` tears down the game's
+live render pass) and §11 named the route around it: capture at Present from
+the non-multisampled back buffer, which `probe.on` survived and which the
+`nocap` configuration measured 0/8 above already uses.
