@@ -182,8 +182,16 @@ __asm__(
  * basis too -- and a left-handed basis is exactly what a single sign error in a
  * rotation produces. It renders a world that moves correctly with your head and
  * is silently inside-out. ht_check_basis() requires det = +1 AND
- * forward x left = up, and headtrack_mathcheck case 5 fails if it ever stops
- * doing so (the old |det| form was re-run against it: it passes a mirror). */
+ * forward x left = up; the old form was re-run against headtrack_mathcheck and
+ * fails case 5.
+ *
+ * WHAT PINS WHAT, precisely -- an earlier version of this comment overclaimed.
+ * The two criteria are REDUNDANT for a mirror: with orthonormal rows,
+ * cross_err = 0 already implies det > 0, so reverting the det criterion ALONE
+ * leaves the suite green and no test can pin it on its own. What case 5 pins is
+ * the PAIR: remove both -- which is precisely the old |det| test -- and case 5
+ * goes red. Defence in depth, not two independent tests. exp 14 RESULTS.md
+ * §2.1 has the measurements. */
 static void check_axis(const char *what, const float *m)
 {
     ht_basis_t r;
@@ -202,7 +210,17 @@ static void check_axis(const char *what, const float *m)
  * alternation belongs: the frame is submitted to ONE eye, so the eye is a
  * property of the frame, not of this hook. -1 means "leave the camera alone",
  * which is the state during menus and any frame we are not driving. */
-static volatile LONG g_eye = -1;
+/* CAM_EYE_CENTRE is ours, not part of the interface gameframe.asi drives: it
+ * means "apply the head orientation, no eye offset", i.e. a mono view from the
+ * head. It exists so head tracking can be observed on a flat monitor with
+ * gameframe.asi absent -- RESULTS.md §5's isolation configuration. gameframe.asi
+ * only ever passes 0, 1 or -1 and needs no knowledge of it. */
+#define CAM_EYE_NONE    (-1)
+#define CAM_EYE_LEFT      0
+#define CAM_EYE_RIGHT     1
+#define CAM_EYE_CENTRE    2
+
+static volatile LONG g_eye = CAM_EYE_NONE;
 static int  (*g_get_fov)(int, float *, float *);   /* gameframe.asi's bo1vr_get_eye_fov */
 static unsigned char *g_base;                      /* image base, for the slot watch */
 static unsigned g_max_slots;
@@ -287,7 +305,10 @@ static int   g_ht_first;                /* logged the first applied frame     */
 static long  g_ht_fail;                 /* consecutive rejected bases         */
 static long  g_ht_fail_total;
 static float g_yaw0;                    /* recentre offset, radians           */
-static volatile LONG g_recentre = 1;    /* recentre on the first valid pose   */
+static volatile LONG g_recentre = 1;    /* a recentre is pending              */
+static int   g_recentre_now;            /* ... and it was asked for by a human,
+                                         * so do not wait for the settle       */
+static long  g_good_run;                /* consecutive Running_OK head poses  */
 static int   g_eye_off_ok = 1;          /* the per-eye offsets are believable */
 static int   g_eyes_checked;
 static float g_ref_pos[3];              /* head position at recentre          */
@@ -295,33 +316,44 @@ static int   g_have_ref_pos;
 
 /* One frame's worth of pose, sampled once per frame in hk_R_RenderScene and
  * read by hk_body. Same thread (the render thread) for both, so no locking:
- * poses.c's seqlock already covers the OpenVR writer. */
+ * poses.c's seqlock already covers the OpenVR writer.
+ *
+ * Three slots: CAM_EYE_LEFT, CAM_EYE_RIGHT, and CAM_EYE_CENTRE -- the head
+ * itself, with a zero eye offset. */
 static struct {
     int   valid;
     float axis[9];       /* eye basis, TRACKING coords, CoD convention (rows
                           * forward/left/up) -- exp 12's cod_axis verbatim   */
     float eye_off[3];    /* eye origin - head origin, tracking coords, units */
-} g_eyepose[2];
+} g_eyepose[3];
 static float g_head_pos[3];
 static int   g_head_valid;
+
+/* Defined below, in "REACHING THIS AT RUN TIME". */
+static void ht_request_recentre(int immediate, const char *who);
+static void ht_log_state(const char *why);
 
 __declspec(dllexport) void bo1vr_camera_set_head_tracking(int on)
 {
     g_ht_enable = on ? 1 : 0;
+    ht_log_state("bo1vr_camera_set_head_tracking()");
 }
 
 /* HT_REF_YAW_ONLY (default) or HT_REF_FULL -- see headtrack.h for the
- * trade-off. Only a headset can settle which is right, so both exist. */
+ * trade-off. Only a headset can settle which is right, so both exist, and both
+ * are reachable at run time (RCtrl+F11, or reffull.on). */
 __declspec(dllexport) void bo1vr_camera_set_ref_mode(int mode)
 {
     g_ht_mode = (mode == HT_REF_FULL) ? HT_REF_FULL : HT_REF_YAW_ONLY;
+    ht_log_state("bo1vr_camera_set_ref_mode()");
 }
 
 /* Make the direction the head is facing right now read as "straight ahead".
- * Takes effect on the next sampled frame. */
+ * Takes effect on the next sampled frame. Also reachable as RCtrl+F9 or by
+ * dropping C:\bo1vr\recentre.on -- see "REACHING THIS AT RUN TIME" below. */
 __declspec(dllexport) void bo1vr_camera_recentre(void)
 {
-    InterlockedExchange(&g_recentre, 1);
+    ht_request_recentre(1, "bo1vr_camera_recentre()");
 }
 
 /* ROOM-SCALE TRANSLATION, off by default -- and this is not timidity.
@@ -335,7 +367,9 @@ __declspec(dllexport) void bo1vr_camera_recentre(void)
 __declspec(dllexport) void bo1vr_camera_set_position_tracking(int on)
 {
     g_ht_pos = on ? 1 : 0;
-    if (on && !g_have_ref_pos) InterlockedExchange(&g_recentre, 1);
+    if (on && !g_have_ref_pos)
+        ht_request_recentre(1, "bo1vr_camera_set_position_tracking()");
+    ht_log_state("bo1vr_camera_set_position_tracking()");
 }
 
 /* The world-scale knob (exp 12 risk #2: units are ASSUMED inches). Changes the
@@ -343,6 +377,148 @@ __declspec(dllexport) void bo1vr_camera_set_position_tracking(int on)
 __declspec(dllexport) void bo1vr_camera_set_units_per_metre(float u)
 {
     poses_set_units_per_metre(u);
+}
+
+/* ===================== REACHING THIS AT RUN TIME ========================
+ *
+ * The five exports below are the programmatic interface, and for a while they
+ * were the ONLY one -- which made them dead code: nothing in the process
+ * resolves them (gameframe.asi looks up bo1vr_camera_set_eye and nothing else),
+ * so HT_REF_FULL could not be selected, head tracking could not be turned off
+ * without deleting camera.asi (which also removes stereo), and recentring could
+ * not be triggered at all. An experiment whose comparison cannot be performed
+ * is not an experiment, and the yaw-only default is exactly the choice that can
+ * only be judged by flipping it while wearing the headset.
+ *
+ * So there are two paths that need no rebuild and no cooperation from anyone:
+ *
+ *   SWITCH FILES in C:\bo1vr, the pattern gameframe.c already uses for its
+ *   bisect (novr.on, nolock.on, ...). Re-read every 90 frames, so they can be
+ *   dropped or removed while the game runs:
+ *
+ *       nohead.on      head orientation off (position-only, the exp 13 camera)
+ *       reffull.on     HT_REF_FULL instead of yaw-only          <- the §7 comparison
+ *       roomscale.on   positional head tracking on
+ *       recentre.on    recentre now. CONSUMED: the file is deleted, so it acts
+ *                      as a button rather than a state, and can be pressed
+ *                      again by re-creating it.
+ *
+ *   KEYS, polled once per frame, for anything that has to be done with the
+ *   headset actually on. RIGHT Ctrl is the modifier because Black Ops binds
+ *   left Ctrl (crouch) and leaves the right one alone:
+ *
+ *       RCtrl+F9    recentre
+ *       RCtrl+F10   head orientation on/off
+ *       RCtrl+F11   yaw-only <-> full reference     <- the §7 comparison
+ *       RCtrl+F12   positional tracking on/off
+ *
+ * Only GetAsyncKeyState's 0x8000 "is down now" bit is read, never the 0x0001
+ * "pressed since last call" bit: that low bit is process-wide state and reading
+ * it would consume the event out from under the game's own input. Edges are
+ * detected here instead.
+ *
+ * Every change logs the resulting state, so the log says what the build was
+ * doing rather than what it was built to do.
+ */
+
+static int switch_on(const char *name)
+{
+    char path[MAX_PATH];
+    lstrcpynA(path, "C:\\bo1vr\\", MAX_PATH);
+    lstrcatA(path, name);
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void switch_consume(const char *name)
+{
+    char path[MAX_PATH];
+    lstrcpynA(path, "C:\\bo1vr\\", MAX_PATH);
+    lstrcatA(path, name);
+    DeleteFileA(path);
+}
+
+static void ht_request_recentre(int immediate, const char *who)
+{
+    InterlockedExchange(&g_recentre, 1);
+    if (immediate) g_recentre_now = 1;
+    camlog("recentre requested by %s", who);
+}
+
+static void ht_log_state(const char *why)
+{
+    camlog("head tracking state (%s): orientation %s, reference %s, "
+           "positional %s, attached %s", why,
+           g_ht_dead ? "DEAD" : (g_ht_enable ? "on" : "off"),
+           g_ht_mode == HT_REF_FULL ? "FULL (game pitch+roll kept)"
+                                    : "yaw-only (level horizon)",
+           g_ht_pos ? "on" : "off",
+           g_ht_bound ? "yes" : "no");
+}
+
+/* Edge-triggered modifier+key. Returns 1 exactly once per physical press. */
+static int chord_pressed(int mod_down, int vk, int *prev)
+{
+    int down = mod_down && (GetAsyncKeyState(vk) & 0x8000) != 0;
+    int edge = down && !*prev;
+    *prev = down;
+    return edge;
+}
+
+/* Called once per frame from headtrack_sample, i.e. only while a 3D scene is
+ * rendering. That is where every one of these settings has any effect, so a
+ * key pressed in a menu simply does nothing rather than being queued. */
+static void headtrack_controls(void)
+{
+    static long   ticks;
+    static int    p9, p10, p11, p12;
+    static int    file_state_known;
+    static int    was_nohead, was_reffull, was_room;
+    int changed = 0;
+    /* One read of the modifier, not one per key. */
+    int mod = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
+
+    if (chord_pressed(mod, VK_F9, &p9))
+        ht_request_recentre(1, "RCtrl+F9");
+    if (chord_pressed(mod, VK_F10, &p10)) {
+        g_ht_enable = !g_ht_enable;
+        changed = 1;
+    }
+    if (chord_pressed(mod, VK_F11, &p11)) {
+        g_ht_mode = (g_ht_mode == HT_REF_FULL) ? HT_REF_YAW_ONLY : HT_REF_FULL;
+        changed = 1;
+    }
+    if (chord_pressed(mod, VK_F12, &p12)) {
+        g_ht_pos = !g_ht_pos;
+        if (g_ht_pos && !g_have_ref_pos) ht_request_recentre(1, "roomscale enable");
+        changed = 1;
+    }
+
+    /* The files, about once a second. GetFileAttributesA on four names at frame
+     * rate would be four syscalls per frame for a setting nobody changes. */
+    if ((ticks++ % 90) == 0) {
+        int nohead  = switch_on("nohead.on");
+        int reffull = switch_on("reffull.on");
+        int room    = switch_on("roomscale.on");
+
+        if (!file_state_known) {
+            file_state_known = 1;
+            was_nohead = nohead; was_reffull = reffull; was_room = room;
+            if (nohead)  { g_ht_enable = 0; changed = 1; }
+            if (reffull) { g_ht_mode = HT_REF_FULL; changed = 1; }
+            if (room)    { g_ht_pos = 1; changed = 1; }
+        } else {
+            if (nohead != was_nohead)   { was_nohead = nohead;   g_ht_enable = !nohead; changed = 1; }
+            if (reffull != was_reffull) { was_reffull = reffull; g_ht_mode = reffull ? HT_REF_FULL : HT_REF_YAW_ONLY; changed = 1; }
+            if (room != was_room)       { was_room = room;       g_ht_pos = room; changed = 1; }
+        }
+        if (switch_on("recentre.on")) {
+            switch_consume("recentre.on");
+            ht_request_recentre(1, "recentre.on (consumed)");
+        }
+    }
+
+    if (changed)
+        ht_log_state("changed at run time");
 }
 
 static void ht_die(const char *why)
@@ -422,13 +598,19 @@ static void ht_check_eye_offsets(void)
 }
 
 /* Once per rendered frame, from hk_R_RenderScene. */
-#define STALE_LIMIT 90          /* frames of dropout we hold the last pose for */
+#define STALE_LIMIT   90        /* frames of dropout we hold the last pose for */
+#define SETTLE_FRAMES 30        /* steady poses before the automatic recentre  */
+#define TRACKING_RUNNING_OK 200 /* ETrackingResult_TrackingResult_Running_OK   */
 static long g_pose_stale;
 
 static void headtrack_sample(void)
 {
     poses_pose_t hmd, ey;
     int e, i, got;
+
+    /* BEFORE the enable check, or RCtrl+F10 would be a one-way switch: turning
+     * head tracking off would also turn off the code that reads the key. */
+    headtrack_controls();
 
     if (!g_ht_enable || g_ht_dead || !g_ht_math_ok)
         return;
@@ -469,6 +651,16 @@ static void headtrack_sample(void)
         g_eyepose[e].valid = 1;
         got++;
     }
+    /* The centre slot is the head itself: the HMD's own basis and no offset.
+     * It needs no GetEyeToHeadTransform, so it stays available on a runtime
+     * where the per-eye transform is refused. */
+    if (g_head_valid) {
+        memcpy(g_eyepose[CAM_EYE_CENTRE].axis, hmd.cod_axis,
+               sizeof g_eyepose[CAM_EYE_CENTRE].axis);
+        memset(g_eyepose[CAM_EYE_CENTRE].eye_off, 0,
+               sizeof g_eyepose[CAM_EYE_CENTRE].eye_off);
+        g_eyepose[CAM_EYE_CENTRE].valid = 1;
+    }
 
     /* TRACKING DROPOUT: hold, then let go.
      *
@@ -479,28 +671,58 @@ static void headtrack_sample(void)
      * thing a headset can do; holding the last pose forever leaves the view
      * stuck at an angle nobody can correct once the headset is off the head.
      * So: hold for a second, then let go and say so. */
-    if (got == 2) {
+    /* The HEAD pose is what orientation needs; the per-eye transforms are a
+     * bonus. Gating this on both eyes would release the view on a runtime that
+     * simply refuses GetEyeToHeadTransform, where the head pose is perfectly
+     * good and mono head tracking would have worked. */
+    if (g_head_valid) {
         if (g_pose_stale > STALE_LIMIT)
-            camlog("head tracking: pose regained after %ld frames", g_pose_stale);
+            camlog("head tracking: pose regained after %ld frames (eyes: %d/2)",
+                   g_pose_stale, got);
         g_pose_stale = 0;
     } else if (++g_pose_stale == STALE_LIMIT + 1) {
-        g_eyepose[0].valid = g_eyepose[1].valid = 0;
+        g_eyepose[0].valid = g_eyepose[1].valid = g_eyepose[2].valid = 0;
         camlog("head tracking: no valid HMD pose for %d frames -- releasing the "
                "view back to the game's orientation", STALE_LIMIT);
     } else if (g_pose_stale > STALE_LIMIT) {
-        g_eyepose[0].valid = g_eyepose[1].valid = 0;
+        g_eyepose[0].valid = g_eyepose[1].valid = g_eyepose[2].valid = 0;
     }
 
     ht_check_eye_offsets();
 
-    if (g_recentre && g_head_valid) {
+    /* WAIT FOR THE POSE TO SETTLE BEFORE THE AUTOMATIC RECENTRE.
+     *
+     * g_yaw0 is captured once and then defines "straight ahead" for the whole
+     * session, so capturing it from the first pose after poses_attach() -- which
+     * is the moment the runtime is least likely to have a real one -- would nail
+     * a wrong forward direction in place for as long as the game runs, with no
+     * way to correct it. So the automatic recentre waits for SETTLE_FRAMES
+     * consecutive poses that the runtime itself reports as Running_OK. A human
+     * asking for a recentre does not wait: they can see what they are doing. */
+    if (g_head_valid && hmd.tracking_result == TRACKING_RUNNING_OK)
+        g_good_run++;
+    else
+        g_good_run = 0;
+
+    if (g_recentre && g_head_valid && (g_recentre_now || g_good_run >= SETTLE_FRAMES)) {
         InterlockedExchange(&g_recentre, 0);
+        g_recentre_now = 0;
         g_yaw0 = ht_yaw_of((const float *)hmd.cod_axis);
         memcpy(g_ref_pos, hmd.cod_origin, sizeof g_ref_pos);
         g_have_ref_pos = 1;
-        camlog("recentred: head yaw %.1f deg is now straight ahead; "
-               "reference position %.1f %.1f %.1f",
-               g_yaw0 * 57.29578f, g_ref_pos[0], g_ref_pos[1], g_ref_pos[2]);
+        camlog("recentred after %ld steady poses (tracking_result %d): head yaw "
+               "%.1f deg is now straight ahead; reference position %.1f %.1f %.1f",
+               g_good_run, (int)hmd.tracking_result, g_yaw0 * 57.29578f,
+               g_ref_pos[0], g_ref_pos[1], g_ref_pos[2]);
+    } else if (g_recentre) {
+        /* Explain the silence: "waiting for a steady pose" and "the recentre
+         * code never runs" otherwise look identical from the log. */
+        static long moans;
+        if ((moans++ % 300) == 0)
+            camlog("recentre pending: head pose %s, tracking_result %d, "
+                   "%ld/%d steady poses so far",
+                   g_head_valid ? "valid" : "INVALID", (int)hmd.tracking_result,
+                   g_good_run, SETTLE_FRAMES);
     }
 }
 
@@ -521,7 +743,11 @@ static int headtrack_apply(unsigned char *rd, int eye, int *did_pos)
     *did_pos = 0;
     if (g_ht_dead || !g_ht_enable || !g_ht_math_ok)
         return 0;
-    if (eye != 0 && eye != 1)
+    /* CAM_EYE_CENTRE is a real slot here, not just at the call site: it is the
+     * head with a zero eye offset, and it is what makes head tracking visible
+     * with gameframe.asi absent. Rejecting it here would reintroduce the exact
+     * silent-nothing this round was sent to fix, one layer further down. */
+    if (eye < CAM_EYE_LEFT || eye > CAM_EYE_CENTRE)
         return 0;
     if (!g_eyepose[eye].valid)
         return 0;
@@ -615,7 +841,7 @@ void __cdecl hk_body(void *out, void *in)
      * axis (refdef axis row 1 -- `left`, not `right`, camera-hook-plan §2.1).
      * Note that the fallback reads the axis AFTER the orientation was written,
      * so it shifts along the head-rotated left axis, not the game's. */
-    if (eye == 0 || eye == 1) {
+    if (eye >= CAM_EYE_LEFT && eye <= CAM_EYE_CENTRE) {
         float *org = (float *)(rd + RD_VIEWORG);
         memcpy(save_org, org, sizeof save_org);
         memcpy(save_axis, rd + RD_VIEWAXIS, sizeof save_axis);
@@ -623,9 +849,11 @@ void __cdecl hk_body(void *out, void *in)
 
         oriented = headtrack_apply(rd, (int)eye, &head_pos);
 
-        if (!head_pos) {
+        /* CAM_EYE_CENTRE is a mono view from the head, so it gets no eye
+         * offset -- neither the headset's nor the assumed one. */
+        if (!head_pos && eye != CAM_EYE_CENTRE) {
             const float *left = (const float *)(rd + RD_VIEWAXIS + 12);
-            float half = g_ipd_units * 0.5f * (eye == 0 ? 1.0f : -1.0f);
+            float half = g_ipd_units * 0.5f * (eye == CAM_EYE_LEFT ? 1.0f : -1.0f);
             org[0] += left[0] * half;
             org[1] += left[1] * half;
             org[2] += left[2] * half;
@@ -636,7 +864,7 @@ void __cdecl hk_body(void *out, void *in)
          * display is what "super zoomed in" is. Setting the refdef tangents
          * lets the engine build its own projection from them, rather than us
          * hand-building a matrix and having to get its handedness right. */
-        if (g_get_fov) {
+        if (g_get_fov && eye != CAM_EYE_CENTRE) {
             float tx, ty;
             if (g_get_fov((int)eye, &tx, &ty)) {
                 float *fx = (float *)(rd + RD_TANHALFFOVX);
@@ -652,10 +880,10 @@ void __cdecl hk_body(void *out, void *in)
      * may legitimately change what it points at afterwards. */
     /* SAMPLE CONSECUTIVELY, not at multiples of 900. The first version did the
      * latter and reported eye=1 every single time, which looked exactly like a
-     * stuck alternation. It was aliasing: R_SetViewParms runs ~3 times per
-     * frame (shadow and portal views go through it too), so every multiple of
-     * 900 landed on the same frame parity. A run of consecutive calls shows the
-     * real pattern and cannot alias. */
+     * stuck alternation. It was aliasing: RESULTS.md §6 MEASURED two
+     * R_SetViewParms calls per frame (two view slots, different `out`
+     * pointers), so every multiple of 900 landed on the same frame parity. A
+     * run of consecutive calls shows the real pattern and cannot alias. */
     if ((n >= 1000 && n < 1012) || n <= 2) {
         const unsigned char *rd = (const unsigned char *)in;
         const float *org  = (const float *)(rd + RD_VIEWORG);
@@ -796,6 +1024,20 @@ static void __cdecl hk_R_RenderScene(void *refdef)
         camlog("R_RenderScene reached (first 3D scene)");
     }
 
+    /* ONE pose sample per frame, and both eyes are built from it. Sampling per
+     * view instead would give the two eyes poses from different instants: the
+     * pair would disagree by however far the head turned in between, which is a
+     * vertical-disparity headache rather than a visible glitch.
+     *
+     * THIS MUST STAY ABOVE THE g_capture BLOCK. The first version of this had it
+     * below, and the early return in the "no gameframe.asi" branch meant
+     * poses_attach() was never reached and head tracking was silently, PERMANENTLY
+     * dead in precisely the configuration RESULTS.md §5 documents as the
+     * isolation test -- gameframe.asi moved aside, this hook the only variable.
+     * The one arrangement in which someone would go looking for a head-tracking
+     * bug was the one arrangement in which head tracking could not run. */
+    headtrack_sample();
+
     if (!g_capture) {
         HMODULE gf = GetModuleHandleA("gameframe.asi");
         if (gf) g_capture = (void (*)(int))GetProcAddress(gf, "bo1vr_capture_eye");
@@ -803,12 +1045,21 @@ static void __cdecl hk_R_RenderScene(void *refdef)
             static int moaned;
             if (!moaned) {
                 moaned = 1;
-                camlog("no bo1vr_capture_eye (gameframe.asi %s) -- single render, "
-                       "alternate-eye fallback", gf ? "loaded but lacks the export" : "not loaded");
+                camlog("*** NO STEREO: bo1vr_capture_eye unavailable (gameframe.asi %s).",
+                       gf ? "loaded but lacks the export" : "NOT LOADED");
+                camlog("*** one render per frame, MONO, no eye offset -- but head "
+                       "orientation still applies, so this is the configuration to "
+                       "test head tracking in on a flat monitor.");
             }
-            /* A second render would only overwrite the first with nothing to
-             * capture it, so render once and let the fallback handle the eyes. */
+            /* MONO, not "leave the camera alone". A second render would only
+             * overwrite the first with nothing to capture it, so render once --
+             * with the CENTRE eye, which applies the head orientation and no eye
+             * offset. Without this the standalone configuration sets no eye at
+             * all, hk_body does nothing, and head tracking cannot be observed
+             * even though it is running. */
+            bo1vr_camera_set_eye(CAM_EYE_CENTRE);
             o_R_RenderScene(refdef);
+            bo1vr_camera_set_eye(CAM_EYE_NONE);
             return;
         }
         g_get_fov = (int (*)(int, float *, float *))
@@ -816,12 +1067,6 @@ static void __cdecl hk_R_RenderScene(void *refdef)
         camlog("dual view: capture entry resolved -- two renders per frame%s",
                g_get_fov ? "; HMD FOV available" : "; NO HMD FOV (still game FOV)");
     }
-
-    /* ONE pose sample per frame, and both eyes are built from it. Sampling per
-     * view instead would give the two eyes poses from different instants: the
-     * pair would disagree by however far the head turned in between, which is a
-     * vertical-disparity headache rather than a visible glitch. */
-    headtrack_sample();
 
     bo1vr_camera_set_eye(0);
     o_R_RenderScene(refdef);
@@ -833,7 +1078,7 @@ static void __cdecl hk_R_RenderScene(void *refdef)
 
     /* Back to "not ours", so any later view this frame -- and the next frame up
      * to its own R_RenderScene -- is left completely alone. */
-    bo1vr_camera_set_eye(-1);
+    bo1vr_camera_set_eye(CAM_EYE_NONE);
 
     /* SLOT WATCH. camera-hook-plan 5.1: the view-parms slot is bump-allocated
      * with no visible bound check, and rendering the scene twice doubles the
@@ -898,9 +1143,12 @@ static DWORD WINAPI init(LPVOID p)
                    "-- ORIENTATION DISABLED, position-only stereo", rc, why);
         else
             camlog("head-tracking maths self-check: PASS (%d/%d cases) -- "
-                   "orientation enabled, mode=%s", HT_SELFCHECK_CASES,
-                   HT_SELFCHECK_CASES,
-                   g_ht_mode == HT_REF_FULL ? "full" : "yaw-only");
+                   "orientation enabled", HT_SELFCHECK_CASES,
+                   HT_SELFCHECK_CASES);
+        ht_log_state("at load");
+        camlog("runtime controls: RCtrl+F9 recentre, F10 orientation on/off, "
+               "F11 yaw-only/full reference, F12 positional; or the files "
+               "nohead.on / reffull.on / roomscale.on / recentre.on in C:\\bo1vr");
     }
     /* Relative to the preferred base, so a relocated image still resolves. */
     target = base + (VA_R_SetViewParms - PREFERRED_BASE);

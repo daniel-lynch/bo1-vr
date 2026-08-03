@@ -67,9 +67,27 @@
  *
  * i.e. the up-component of the final forward/left/up rows must equal the
  * up-component of the head's.  ht_check_yaw_invariant() tests it on live data
- * every frame.  It is violated by a swapped multiplication order, by either
- * factor being transposed, and by any sign error in the yaw matrix, and it
- * needs no knowledge of what the correct answer is -- see ht_selfcheck().
+ * every frame, and needs no knowledge of what the correct answer is.
+ *
+ * BE PRECISE ABOUT WHAT IT WATCHES.  An earlier version of this comment claimed
+ * it caught "any sign error in the yaw matrix".  It does not, and the claim was
+ * measured false during review:
+ *
+ *      WHAT IT CATCHES   ht_compose failing to carry H's third column through
+ *                        unchanged -- so a TRANSPOSED H, a SWAPPED order
+ *                        (G*H), and arithmetic damage inside ht_compose.
+ *                        Case 6 verifies each of those is rejected.
+ *      WHAT IT CANNOT    ANY error in G.  The yaw-only branch of
+ *                        ht_build_reference writes G's third column as the
+ *                        literal (0,0,1), so every wrong G that shares that
+ *                        column satisfies the invariant identically: H*G^T,
+ *                        H*yaw(wrong angle) and even H*I were all measured at
+ *                        err = 0.000000 and ACCEPTED.
+ *
+ * G is pinned by cases 1 and 9 instead, offline.  The invariant is a watchdog
+ * on one multiplication, not on the whole pipeline, and calling it more than
+ * that would be exactly the kind of reassuring instrument this project keeps
+ * being burned by.
  */
 #ifndef BO1VR_HEADTRACK_H
 #define BO1VR_HEADTRACK_H
@@ -142,7 +160,10 @@ int ht_check_basis(const float M[9], ht_basis_t *r);
 
 /* The runtime invariant described at the top: in yaw-only mode the third
  * column of F must equal the third column of H.  Returns 1 if it holds.
- * If `err` is non-NULL it receives the largest component difference. */
+ * If `err` is non-NULL it receives the largest component difference.
+ *
+ * Watches ht_compose only.  Blind to every error in G -- see the header comment
+ * for the measurements. */
 int ht_check_yaw_invariant(const float F[9], const float H[9], float tol,
                            float *err);
 

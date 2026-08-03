@@ -81,7 +81,7 @@ This is the part that matters, so it is stated exactly.
 | **Sign error** producing a mirror (any single row or component negated) | **case 4 + case 5** | `ht_check_basis` requires **det = +1** *and* `forward × left = up`. Case 4 runs a compound yaw/pitch/roll head pose through and demands both. Case 5 hands the checker a deliberately mirrored basis and **fails if it is accepted** — because a checker that accepts everything is worse than no checker. |
 | **Sign error in the yaw matrix or the recentre** | **case 1, 7** | case 1 requires the yaw-only reference to reproduce the game's heading exactly; case 7 requires recentring by −ψ to zero the head's yaw and to leave pitch untouched. |
 | **Transposed `ref → world`** (swapped eyes) | **case 8** | `(0,1,0)` in the reference frame must land on `(−sin φ, cos φ, 0)`; the case also asserts `G` and `G^T` disagree, so it cannot pass by luck. |
-| **Anything, at run time, on live data** | **the yaw invariant** | In yaw-only mode the reference rotation never touches world up, so the third *column* of `F` must equal the third column of `H`, exactly. `ht_check_yaw_invariant` tests that every frame with no knowledge of the right answer. Case 6 proves it bites: it must **reject** a transposed `H` and a swapped order. |
+| **`ht_compose` only, at run time, on live data** | **the yaw invariant** | In yaw-only mode the third *column* of `F` must equal the third column of `H`, exactly, so `ht_check_yaw_invariant` catches a **transposed `H`**, a **swapped order**, and arithmetic damage inside `ht_compose` — every frame, with no knowledge of the right answer. Case 6 proves it rejects the first two. **It is blind to every error in `G`**: the yaw-only branch writes `G`'s third column as the literal `(0,0,1)`, so `H·Gᵀ`, `H·yaw(−137°)` and `H·I` all score `err = 0.000000` and are **accepted** (measured in review). `G` is pinned by cases 1 and 9 instead, offline. Case 6's second half asserts that blindness, so the limitation cannot quietly disappear and leave this table lying. |
 
 Short version: **case 3 is the transpose/order detector; det = +1 plus
 `fwd × left = up` (cases 4 and 5) is the sign/mirror detector; the yaw invariant
@@ -103,6 +103,7 @@ hitting. Single-token mutations were compiled and run in a scratch copy
 | `ht_ref_to_world` transposed | **FAIL case 8** — the stereo pair would be swapped |
 | `ht_vec_yaw` rotation sense flipped | **FAIL case 7** — recentring did not zero the head yaw |
 | `ht_build_reference` heading `y` negated | **FAIL case 1** |
+| `ht_build_reference` **near-vertical fallback** `hy = -game_axis[3]` → `+` | **FAIL case 9** — *only since the case was extended; see below* |
 | **exp 13's own orthonormality test** (`|det| == 1`, no cross-product check) | **FAIL case 5 — a MIRRORED basis passed ht_check_basis** |
 | unmodified control | PASS (10 cases) |
 
@@ -111,13 +112,27 @@ The last row is a real finding about the existing code, not a hypothetical:
 `fabsf(fabsf(det) - 1) < 1e-3`, which is true of a mirror — precisely what a
 single sign error in a rotation produces, and precisely what that function was
 put there to catch. `camera.c` now calls `ht_check_basis` instead, and case 5
-fails if anyone ever loosens it back.
+fails if anyone restores the old form.
 
-(One redundancy worth recording: with the cross-product test present, the
-`det > 0` test alone is not load-bearing for *that particular* mirror — removing
-either one still catches it. Removing **both** does not. That is defence in
-depth, and it is why the mutation of exp 13's exact historical test is the row
-that goes red.)
+**A hole review found, now closed.** Case 9 originally tested the near-vertical
+heading fallback at yaw 0 only — where the left row is `(0, 1, 0)` and
+`game_axis[3] = -sin(0) = 0`, so the *sign* of `hy = -game_axis[3]` is
+multiplied by zero and is unobservable. The mutation `hy = +game_axis[3]`
+survived the entire suite and every runtime guard: it mirrors the heading only
+when the player looks almost straight up or down, i.e. rarely and briefly, and
+would have been reported as "the view sometimes flips when I look up". Case 9
+now repeats at **yaw 50, pitch 88** (forward's horizontal length `cos 88° =
+0.035`, safely inside the fallback branch) and compares against
+`ht_yaw_matrix(50°)`. Verified both ways: unmutated **PASS**, mutant **FAIL at
+case 9**.
+
+**What case 5 does and does not pin.** The `det = +1` and `forward × left = up`
+criteria are **redundant**: with orthonormal rows, `cross_err = 0` already
+implies `det > 0`, so *no test in this suite pins the determinant criterion on
+its own* — revert it alone and the suite stays green. Removing **both** is what
+goes red, and that pair-removal is exactly exp 13's historical test. Defence in
+depth, not two independent tests. Anywhere that says otherwise is wrong; it said
+otherwise in three places until review caught it.
 
 ---
 

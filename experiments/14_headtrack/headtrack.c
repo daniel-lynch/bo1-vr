@@ -439,13 +439,17 @@ int ht_selfcheck(char *why, int cap)
         }
     }
 
-    /* --- 6.  The runtime invariant, and proof that it bites. -----------
+    /* --- 6.  The runtime invariant: what it bites, and what it cannot. -
      * In yaw-only mode the reference rotation never touches world up, so the
      * third COLUMN of the composed basis must equal the third column of the
      * head basis, exactly.  The camera hook tests this every frame on live
-     * data, where no closed form is available. */
+     * data, where no closed form is available.
+     *
+     * It is a watchdog on ht_compose, NOT on the pipeline: it is blind to every
+     * error in G, and the second half of this case pins that blindness rather
+     * than letting the comments overstate it. */
     {
-        float HT[9];
+        float HT[9], GT[9];
         int i, j;
         ht_euler(DEG(20), DEG(35), H);
         ht_yaw_matrix(DEG(-70), G);
@@ -464,6 +468,39 @@ int ht_selfcheck(char *why, int cap)
         if (ht_check_yaw_invariant(T, H, 1e-4f, 0)) {
             ht_copy_why(why, cap, "case 6: the yaw invariant accepts a SWAPPED multiplication order");
             return 6;
+        }
+
+        /* WHAT IT CANNOT SEE, pinned so that nobody has to take the comment's
+         * word for it. The yaw-only branch writes G's third column as the
+         * literal (0,0,1), so the invariant is blind to every error in G: a
+         * transposed G, the wrong yaw angle, and no reference at all are all
+         * ACCEPTED. Cases 1 and 9 are what pin G.
+         *
+         * These assertions are the reverse of the ones above -- they fail if
+         * the invariant ever STARTS catching these -- because a limitation
+         * that quietly goes away leaves three documents claiming something
+         * false about the code. Found by adversarial review, which measured
+         * exactly this. */
+        {
+            float I9[9];
+            int reacts = 0;
+            for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) GT[i*3+j] = G[j*3+i];
+            memset(I9, 0, sizeof I9); I9[0] = I9[4] = I9[8] = 1.0f;
+
+            ht_compose(H, GT, T);            /* reference transposed  */
+            if (!ht_check_yaw_invariant(T, H, 1e-4f, 0)) reacts = 1;
+            ht_compose(H, I9, T);            /* no reference at all   */
+            if (!ht_check_yaw_invariant(T, H, 1e-4f, 0)) reacts = 1;
+            ht_yaw_matrix(DEG(-137), T);
+            ht_compose(H, T, T);             /* the wrong yaw angle   */
+            if (!ht_check_yaw_invariant(T, H, 1e-4f, 0)) reacts = 1;
+
+            if (reacts) {
+                ht_copy_why(why, cap,
+                    "case 6: the yaw invariant now reacts to G -- headtrack.h and "
+                    "both RESULTS.md say it cannot; update them deliberately");
+                return 6;
+            }
         }
     }
 
@@ -559,6 +596,33 @@ int ht_selfcheck(char *why, int cap)
         }
         if (!ht_close9(G, E, 1e-3f)) {
             ht_copy_why(why, cap, "case 9: exactly-vertical fallback gave the wrong heading");
+            return 9;
+        }
+
+        /* AT A NON-ZERO YAW, which is the whole point.
+         *
+         * Both sub-cases above use yaw 0, where the left row is (0, 1, 0) and
+         * game_axis[3] = -sin(0) = 0 -- so the SIGN of `hy = -game_axis[3]` is
+         * multiplied by zero and is unobservable. The mutation
+         * `hy = +game_axis[3]` survived the entire suite and every runtime
+         * guard: it produces a mirrored heading only when the player is looking
+         * almost straight up or down, which is rare, transient, and would have
+         * been reported as "the view sometimes flips when I look up".
+         *
+         * Yaw 50 with pitch 88 puts the forward row's horizontal length at
+         * cos(88) = 0.035 (n2 = 0.0012, below the 0.01 threshold), so the
+         * fallback branch is the one under test, and the answer must still be
+         * a yaw of +50. Found by adversarial review; kept as the closing case. */
+        ht_euler(DEG(50), DEG(88), game);
+        if (!ht_build_reference(game, HT_REF_YAW_ONLY, G)) {
+            ht_copy_why(why, cap, "case 9: near-vertical view at yaw 50 produced no reference");
+            return 9;
+        }
+        ht_yaw_matrix(DEG(50), E);
+        if (!ht_close9(G, E, 1e-2f)) {
+            ht_copy_why(why, cap,
+                "case 9: the near-vertical heading FALLBACK has the wrong sign "
+                "(it mirrors the view when looking near-vertically)");
             return 9;
         }
     }
