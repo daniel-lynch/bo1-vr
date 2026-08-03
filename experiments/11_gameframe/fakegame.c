@@ -96,6 +96,21 @@ int main(void)
                                D3DCOLOR_XRGB((i * 3) & 0xff, 40, 255 - ((i * 3) & 0xff)), 1.0f, 0);
         /* THE POINT: swap chain, not device. */
         IDirect3DSwapChain9_Present(sc, NULL, NULL, NULL, NULL, 0);
+
+        /* BO1VR_STALL=<seconds> simulates the freeze: the render thread stops
+         * presenting and just sits there, which is exactly what the real bug
+         * looks like from the watchdog's side. This exists so the freeze
+         * autopsy can be shown to produce output BEFORE a playtest is spent on
+         * it -- two instruments in this project were silent when they were
+         * finally needed, and both times the run was wasted. */
+        if (i == 30) {
+            const char *s = getenv("BO1VR_STALL");
+            if (s && atoi(s) > 0) {
+                fprintf(stderr, "fakegame: stalling %d s at frame %d\n", atoi(s), i);
+                fflush(stderr);
+                Sleep((DWORD)atoi(s) * 1000);
+            }
+        }
     }
     fprintf(stderr, "fakegame: done\n");
     fflush(stderr);

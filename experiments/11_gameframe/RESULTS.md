@@ -354,3 +354,64 @@ it halves the remainder again.
 Reminder of the fixed point: `novr.on` (none of this active, every hook and the
 dual-view render still running) is **stable**. The boundary is somewhere in the
 list above.
+
+## 8. Stop bisecting; make the freeze name itself
+
+Four rounds of bisecting have each cost a playtest and returned one bit. They
+have been worth it -- Submit, the frame handoff, texture reuse and the DXVK
+queue lock are all dead as theories, killed by measurement rather than
+argument -- but the method is now the bottleneck. `nosubmit.on` proved the
+strongest form of the result: **the game froze with no `IVRCompositor::Submit`
+call at all.** Whatever wedges the render loop, it is not the handoff.
+
+The remaining suspects are capture/`StretchRect`, the gate's busy-wait,
+`WaitGetPoses` on the render thread, and the interop setup. Two more rounds to
+separate them, at one playtest each.
+
+There is no reason to pay that. `g_stage` answers "where are WE when it
+freezes", and has answered it four times running: **stage 0, idle, our code not
+on the stack.** That is precisely why it can no longer help -- the question is
+now about the GAME's threads, and the watchdog is a live thread sitting in the
+same process with the authority to look.
+
+`freeze_autopsy()` suspends every other thread in turn, reads its register
+context and a slab of its stack, resumes it, and only then symbolises: module
+name plus offset for the instruction pointer, and for every stack slot that
+points into an executable page. Not a real unwind -- mingw's DWARF unwinder
+cannot walk MSVC frames (Exp. 13) -- but the callers are all in there, and the
+module names are the answer.
+
+**Order is load-bearing.** Between `SuspendThread` and `ResumeThread` nothing is
+called that could take a lock the suspended thread holds: no logging, no
+`GetModuleFileNameA` (loader lock), no CRT. Only `ReadProcessMemory`, a syscall.
+Getting this backwards would deadlock the process while diagnosing a deadlock,
+and the failure would be indistinguishable from the bug.
+
+### Proven on the bench, before a playtest was spent on it
+
+Two instruments in this project were silent when they were finally needed -- the
+slot watch behind a `c < 4096` filter, the crop line behind `g_fov_ok` -- and
+both times the run was wasted. So `fakegame.exe` gained `BO1VR_STALL=<seconds>`,
+which stops presenting mid-loop and looks exactly like the freeze from the
+watchdog's side, and the watchdog now starts BEFORE the VR-init gate so it runs
+even where VR is unavailable. Under wine, with `vr_init` failing:
+
+```
+AUTOPSY: 2 other threads; render thread is 36
+AUTOPSY: tid 36 [RENDER] eip=7bcdd390 ntdll.dll+0xd390 esp=0064fde4
+AUTOPSY:   [36] +032 00401acc fakegame.exe+0x1acc      <- the stalling caller
+AUTOPSY: tid 312 eip=7bcde040 ntdll.dll+0xe040
+AUTOPSY:   [312] +000 79b2c131 wined3d.dll+0x1ac131
+```
+
+It fires at 5 s and again at 20 s -- twice and no more, so what is genuinely
+stuck can be told from what merely happened to be idle -- and the process ran on
+to a clean exit afterwards, which is the evidence that the suspend/resume does
+not itself hang anything.
+
+### The next run has the switches OFF
+
+All three bisect switches are removed. The autopsy does not need them, and the
+real configuration is the one worth diagnosing: full pipeline, stereo, a picture
+in the headset. If it freezes, the log names the module. If it does not, the
+playtest was still a stereo validation rather than a black screen.

@@ -39,6 +39,7 @@
 #define COBJMACROS
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <d3d9.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -456,10 +457,151 @@ static volatile LONG g_stage;      /* 0 idle 1 capture/resolve 2 pre-submit
                                       3 in Submit eye0 4 in Submit eye1
                                       5 PostPresentHandoff */
 static volatile LONG g_watch_frame;
+static DWORD g_render_tid;
+
+/* THE AUTOPSY.
+ *
+ * g_stage answers "where are WE when it freezes" and has now answered it four
+ * times running: stage 0, idle, our code not on the stack at all. That is a
+ * real result -- it is what killed the Submit, the handoff, the texture-reuse
+ * and the queue-lock theories -- but it cannot say anything about where the
+ * GAME is, and that is now the whole question.
+ *
+ * Bisecting further costs one playtest per bit, and there is no reason to pay
+ * that: the freeze happens in-process, with a live watchdog thread sitting
+ * right there. It can suspend every other thread and read its instruction
+ * pointer directly. Four suspects become one named module and offset, in one
+ * run instead of two more rounds.
+ *
+ * ORDER MATTERS AND IS NOT A STYLE CHOICE. Between SuspendThread and
+ * ResumeThread we call nothing that can take a lock the suspended thread might
+ * hold -- no logging, no GetModuleFileName (loader lock), no CRT. We copy the
+ * raw register context and a slab of stack with ReadProcessMemory (a syscall,
+ * lock-free against our own process) and resume immediately. Symbolisation and
+ * logging happen afterwards, with every thread running again. Getting this
+ * backwards would deadlock the process while diagnosing a deadlock, and the
+ * result would look exactly like the bug.
+ */
+#define AUT_MAXT   48
+#define AUT_STACK  256                   /* dwords of stack copied per thread */
+
+struct aut_thread {
+    DWORD tid;
+    DWORD eip, esp, ebp;
+    int   ok;
+    DWORD stack[AUT_STACK];
+    int   stack_n;
+};
+
+/* Name an address: which module owns it, and at what offset. Returns 0 if the
+ * address is not in a committed executable page -- that filter is what makes
+ * the stack scan below produce return addresses rather than noise. */
+static int aut_symbolise(DWORD addr, char *out, size_t outsz)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    char path[MAX_PATH], *base;
+    DWORD prot;
+
+    if (!addr) return 0;
+    if (!VirtualQuery((LPCVOID)(uintptr_t)addr, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT || !mbi.AllocationBase) return 0;
+    prot = mbi.Protect & 0xff;
+    if (prot != PAGE_EXECUTE && prot != PAGE_EXECUTE_READ &&
+        prot != PAGE_EXECUTE_READWRITE && prot != PAGE_EXECUTE_WRITECOPY)
+        return 0;
+
+    if (!GetModuleFileNameA((HMODULE)mbi.AllocationBase, path, sizeof(path)))
+        return 0;
+    base = strrchr(path, '\\');
+    base = base ? base + 1 : path;
+    _snprintf(out, outsz, "%s+0x%lx", base,
+              (unsigned long)(addr - (DWORD)(uintptr_t)mbi.AllocationBase));
+    out[outsz - 1] = '\0';
+    return 1;
+}
+
+static void freeze_autopsy(void)
+{
+    static struct aut_thread t[AUT_MAXT];
+    HANDLE snap, th;
+    THREADENTRY32 te;
+    DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    int n = 0, i, j, shown;
+    char sym[160];
+    CONTEXT ctx;
+    SIZE_T got;
+
+    snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) { glog("AUTOPSY: no thread snapshot"); return; }
+
+    te.dwSize = sizeof(te);
+    if (Thread32First(snap, &te)) {
+        do {
+            if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+            if (n >= AUT_MAXT) break;
+            t[n].tid = te.th32ThreadID;
+            t[n].ok = 0;
+            t[n].stack_n = 0;
+
+            th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT,
+                            FALSE, te.th32ThreadID);
+            if (th) {
+                if (SuspendThread(th) != (DWORD)-1) {
+                    memset(&ctx, 0, sizeof(ctx));
+                    ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+                    if (GetThreadContext(th, &ctx)) {
+                        t[n].eip = ctx.Eip;
+                        t[n].esp = ctx.Esp;
+                        t[n].ebp = ctx.Ebp;
+                        t[n].ok  = 1;
+                        got = 0;
+                        if (ReadProcessMemory(GetCurrentProcess(),
+                                              (LPCVOID)(uintptr_t)ctx.Esp,
+                                              t[n].stack, sizeof(t[n].stack), &got))
+                            t[n].stack_n = (int)(got / sizeof(DWORD));
+                    }
+                    ResumeThread(th);        /* before ANY logging. see above. */
+                }
+                CloseHandle(th);
+            }
+            n++;
+        } while (Thread32Next(snap, &te));
+    }
+    CloseHandle(snap);
+
+    glog("AUTOPSY: %d other threads; render thread is %lu", n,
+         (unsigned long)g_render_tid);
+
+    for (i = 0; i < n; i++) {
+        if (!t[i].ok) { glog("AUTOPSY: tid %lu -- no context", (unsigned long)t[i].tid); continue; }
+        if (!aut_symbolise(t[i].eip, sym, sizeof(sym)))
+            _snprintf(sym, sizeof(sym), "<unmapped>");
+        glog("AUTOPSY: tid %lu%s eip=%08lx %s esp=%08lx ebp=%08lx",
+             (unsigned long)t[i].tid,
+             t[i].tid == g_render_tid ? " [RENDER]" : "",
+             (unsigned long)t[i].eip, sym,
+             (unsigned long)t[i].esp, (unsigned long)t[i].ebp);
+
+        /* A scan, not a real unwind: the frames here are MSVC's and mingw's
+         * DWARF unwinder cannot walk them (docs/, exp 13). Every stack slot
+         * that points into an executable page is printed; some are stale, but
+         * the callers are all in there and the module names are what matter. */
+        for (j = 0, shown = 0; j < t[i].stack_n && shown < 12; j++) {
+            if (aut_symbolise(t[i].stack[j], sym, sizeof(sym))) {
+                glog("AUTOPSY:   [%lu] +%03d %08lx %s",
+                     (unsigned long)t[i].tid, j * 4,
+                     (unsigned long)t[i].stack[j], sym);
+                shown++;
+            }
+        }
+    }
+    glog("AUTOPSY: end");
+}
 
 static DWORD WINAPI watchdog_thread(LPVOID p)
 {
     LONG last = -1, same = 0;
+    int autopsied = 0;
     (void)p;
     for (;;) {
         Sleep(1000);
@@ -468,12 +610,28 @@ static DWORD WINAPI watchdog_thread(LPVOID p)
                 glog("WATCHDOG: no frame for %ld s, stuck at stage %ld "
                      "(1=capture 2=pre-submit 3=Submit-eye0 4=Submit-eye1 5=handoff), "
                      "pose ticks %ld", same, g_stage, g_pose_ticks);
+            /* Twice, and no more: at 5 s to catch it fresh, at 20 s to show
+             * what is still stuck versus what merely happened to be idle. A
+             * repeating autopsy would suspend threads every tick forever. */
+            if (same == 5 || same == 20) freeze_autopsy();
+            if (same == 20) autopsied = 1;
+            (void)autopsied;
         } else {
             last = g_watch_frame;
             same = 0;
         }
     }
     return 0;
+}
+
+static void start_watchdog(void)
+{
+    static LONG started;
+    DWORD tid;
+    if (InterlockedExchange(&started, 1)) return;
+    /* Never from DllMain: creating a thread under the loader lock is the
+     * deadlock src/dllmain.c warns about. The first Present is safe. */
+    CreateThread(NULL, 0, watchdog_thread, NULL, 0, &tid);
 }
 
 static void start_pose_thread(void)
@@ -491,7 +649,7 @@ static void start_pose_thread(void)
      * survive. Kept as dead code rather than deleted so the reasoning above
      * stays attached to the thing it is about. */
     (void)pose_thread;
-    CreateThread(NULL, 0, watchdog_thread, NULL, 0, &tid);
+    (void)tid;             /* the watchdog now starts unconditionally, earlier */
 }
 
 /* --------------------------------------------------- dual-view capture */
@@ -786,10 +944,17 @@ static void submit_eye(int i)
 static void do_frame(IDirect3DSwapChain9 *sc)
 {
     IDirect3DSurface9 *bb = NULL;
-    static struct TrackedDevicePose_t rposes[64], gposes[64];
     HRESULT hr;
     LONG n;
     int i;
+
+    /* The watchdog starts BEFORE the VR-init gate and outside it, so it is
+     * running in every configuration -- including the ones where VR is off or
+     * failed. A freeze diagnostic that only exists when the thing it diagnoses
+     * is enabled cannot be tested against a known-good run, and this one gets
+     * exercised on the fakegame bench precisely because vr_init fails there. */
+    start_watchdog();
+    g_render_tid = GetCurrentThreadId();     /* whoever presents IS the render thread */
 
     if (g_state < 0 || !g_dev)
         return;
