@@ -480,3 +480,68 @@ cause.
 **Next split is inside `interop_init`:** the interop handles alone, versus the
 exported render targets alone. That is one more unattended trial, not a
 playtest.
+
+## 10. The freeze, named: the GAME has an event-query spin loop, and we starve it
+
+Bisecting inside `interop_init` (all unattended, ~90 s per trial):
+
+| configuration | result |
+|---|---|
+| `notex` — interop device + Vulkan handles, **no eye targets** | SURVIVED |
+| `noviq` — targets created, **no** `ID3D9VkInteropTexture` export | FROZE |
+| `noq` — targets exported, **no** event queries | FROZE |
+| `nocap`+`noviq`+`noq` — targets exist, **nothing touches them** | SURVIVED, 11 400 frames |
+| `noviq`+`noq` — **capture only** (plain D3D9 StretchRect) | FROZE |
+
+So the targets are not the problem; *touching* them is — and the D3D9 path
+(capture) and the Vulkan path (transition/Submit) each do it independently.
+That is where bisecting stops being informative, because there is no single
+component left to remove.
+
+The autopsy had already put the render thread at `BlackOps.exe+0xaae6b`, which
+disassembles to a one-instruction `Sys_Sleep` wrapper. Its caller is the answer:
+
+```
+6ebb40:  ecx = [0x39660b4]                 ; ring size
+         edx = [0x396a4cc]                 ; index
+         idiv ecx                          ; edx = (index + size - 1) % size
+         eax = [edx*4 + 0x3966134]         ; ring[i] -> IDirect3DQuery9*
+         test eax,eax ; je done            ; empty slot -> done
+6ebb60:  ecx = [eax]                       ; vtable
+         push 1                            ; D3DGETDATA_FLUSH
+         push 4                            ; sizeof(DWORD)
+         lea edx,[esp+0x14]; push edx      ; pData
+         push eax                          ; this
+         call [ecx+0x1c]                   ; slot 7 = IDirect3DQuery9::GetData
+         test eax,eax ; je done            ; S_OK      -> done
+         cmp  eax,0x88760868 ; je done     ; DEVICELOST-> done
+6ebb7c:  push 1 ; call Sys_Sleep           ; S_FALSE   -> Sleep(1)
+6ebb86:  jmp 6ebb40                        ;           -> and poll again, forever
+```
+
+**The game runs a ring of D3D9 EVENT queries and spins on
+`GetData(D3DGETDATA_FLUSH)` with `Sleep(1)` between polls, leaving only on
+`S_OK` or `D3DERR_DEVICELOST`.** The freeze is that query never retiring. The
+main thread then blocks in `WaitForSingleObject` waiting for the render thread,
+which is what the autopsy saw, and nothing in our submit path is on any stack
+because our code has long since returned.
+
+This explains every result above at once. It is not about which of our
+operations runs; it is that ANY GPU work we issue against extra resources can
+leave the game's own fence unretired. It also explains why the compositor is
+always healthy, why `nosubmit` froze, and why `novr.on` is stable.
+
+The irony is instructive: §7 added a gate that spins on
+`GetData(D3DGETDATA_FLUSH)` because that is the correct D3D9 way to prove work
+has landed. The game had the identical construct all along, one ring away, and
+we starve it.
+
+### What this does NOT yet establish
+
+Which DXVK behaviour actually defers the submission that would retire the
+game's query. Both a plain `StretchRect` and the interop transition path
+trigger it, so the mechanism is below the D3D9 API surface and needs to be
+found on the DXVK side, not by more bisecting here.
+
+Addresses for the record: query ring base `0x3966134`, ring size `0x39660b4`,
+index `0x396a4cc`, poll loop `0x6ebb40`, `Sys_Sleep` `0x4aae60`.

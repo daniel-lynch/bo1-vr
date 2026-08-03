@@ -148,6 +148,12 @@ static LONG  g_flat_frames;
 static LONG  g_submit_fails;
 static LONG  g_gate_timeouts;
 static LONG  g_gate_max_spins;
+
+/* Bisect switches, declared here because interop_init (above the definitions)
+ * now consults them too. */
+static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq;
+static void read_opts(void);
+
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
 static int  g_dev_hooked;
@@ -307,6 +313,13 @@ static int interop_init(IDirect3DDevice9 *dev)
         return 0;
     }
 
+    /* notex.on splits interop_init in half. Above this line: the interop
+     * device, GetVulkanHandles, GetSubmissionQueue. Below it: four
+     * D3DUSAGE_RENDERTARGET textures, their ID3D9VkInteropTexture exports and
+     * an event query each. novk.on showed the freeze needs SOMETHING in this
+     * function; this says which half. */
+    if (g_notex) { glog("notex.on: interop handles only, no eye targets"); return 1; }
+
     for (i = 0; i < 4; i++) {
         struct eye_target *E = &g_eyes[i >> 1][i & 1];
         /* X8R8G8B8, not A8R8G8B8: the back buffer has an alpha channel whose
@@ -319,6 +332,17 @@ static int interop_init(IDirect3DDevice9 *dev)
         if (FAILED(hr)) { glog("CreateTexture eye %d hr=0x%08lx", i, (unsigned long)hr); return 0; }
         hr = IDirect3DTexture9_GetSurfaceLevel(E->tex, 0, &E->surf);
         if (FAILED(hr)) { glog("GetSurfaceLevel eye %d", i); return 0; }
+
+        /* noviq.on: the D3D9 side stays -- the render target exists, capture
+         * resolves into it, the event query is created and polled. Only the
+         * ID3D9VkInteropTexture export and GetVulkanImageInfo are skipped, so
+         * DXVK is never asked to hand out a VkImage for this resource. */
+        if (g_noviq) {
+            if (FAILED(IDirect3DDevice9_CreateQuery(dev, D3DQUERYTYPE_EVENT, &E->q)))
+                E->q = NULL;
+            glog("noviq.on: eye %d target created, no Vulkan export", i);
+            continue;
+        }
 
         hr = IDirect3DTexture9_QueryInterface(E->tex, &IID_ID3D9VkInteropTexture,
                                               (void **)&E->vktex);
@@ -346,7 +370,7 @@ static int interop_init(IDirect3DDevice9 *dev)
          * command issued before it has been consumed by the GPU -- the D3D9
          * expression of "the work is really submitted", which is what
          * render-submit-sync-RE.md says must be verified rather than assumed. */
-        if (FAILED(IDirect3DDevice9_CreateQuery(dev, D3DQUERYTYPE_EVENT, &E->q)))
+        if (g_noq || FAILED(IDirect3DDevice9_CreateQuery(dev, D3DQUERYTYPE_EVENT, &E->q)))
             E->q = NULL;
         glog("eye %d: VkImage=0x%016llx layout=%d %ux%u fmt=%d", i,
              (unsigned long long)E->image, (int)E->layout,
@@ -768,8 +792,6 @@ static void setup_crop(UINT sw, UINT sh)
  *
  * StretchRect does the MSAA resolve and the downscale to the per-eye size in
  * one call, exactly as the AER path did. */
-static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk;
-static void read_opts(void);
 
 __declspec(dllexport) void bo1vr_capture_eye(int eye)
 {
@@ -779,6 +801,7 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
     if (g_state != 1 || !g_dev || eye < 0 || eye > 1)
         return;                               /* not up yet -- first frames */
     if (!g_vkdev) return;                     /* novk.on: no interop, no capture */
+    if (!g_eyes[eye][g_buf].surf) return;     /* notex.on: no target to resolve into */
 
     /* nocap.on: everything else stays -- interop, textures, transitions,
      * Submit -- but no D3D9 work is issued from the camera hook. It is the
@@ -878,8 +901,11 @@ static void read_opts(void)
     g_nowait   = opt("nowait.on");
     g_nocap    = opt("nocap.on");
     g_novk     = opt("novk.on");
-    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d",
-         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk);
+    g_notex    = opt("notex.on");
+    g_noviq    = opt("noviq.on");
+    g_noq      = opt("noq.on");
+    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d",
+         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq);
 }
 
 static void submit_eye(int i)
@@ -892,7 +918,7 @@ static void submit_eye(int i)
     struct eye_target *E = &g_eyes[i][g_buf];
 
     read_opts();
-    if (!g_vkdev) return;                     /* novk.on: nothing to submit */
+    if (!g_vkdev || !E->vktex) return;         /* novk/notex: nothing to submit */
 
     sub.aspectMask     = BO1VR_VK_IMAGE_ASPECT_COLOR_BIT;
     sub.baseMipLevel   = 0;
