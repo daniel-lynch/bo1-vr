@@ -15,7 +15,7 @@ so what is checked is the shipping code, not a copy of it.
 $ make && make check
 OK: no libgcc runtime dependency
 OK: no OpenVR in the offline check
-headtrack_mathcheck: PASS (10 cases; no OpenVR, no game, no window)
+headtrack_mathcheck: PASS (12 cases; no OpenVR, no game, no window)
 ```
 
 ---
@@ -105,7 +105,10 @@ hitting. Single-token mutations were compiled and run in a scratch copy
 | `ht_build_reference` heading `y` negated | **FAIL case 1** |
 | `ht_build_reference` **near-vertical fallback** `hy = -game_axis[3]` → `+` | **FAIL case 9** — *only since the case was extended; see below* |
 | **exp 13's own orthonormality test** (`|det| == 1`, no cross-product check) | **FAIL case 5 — a MIRRORED basis passed ht_check_basis** |
-| unmodified control | PASS (10 cases) |
+| **near-vertical band SWITCHED at a threshold** rather than blended (`HT_BAND_HI` → `HT_BAND_LO`) — *the behaviour that shipped* | **FAIL case 11** — the heading jumps inside the band |
+| `ht_check_round_trip` computes `F·G` instead of `F·Gᵀ` | **FAIL case 12** |
+| full mode hands back the transposed game axis | **FAIL case 10** |
+| unmodified control | PASS (12 cases) |
 
 The last row is a real finding about the existing code, not a hypothetical:
 **exp 13's `check_axis` accepted a left-handed basis.** It tested
@@ -125,6 +128,20 @@ now repeats at **yaw 50, pitch 88** (forward's horizontal length `cos 88° =
 0.035`, safely inside the fallback branch) and compares against
 `ht_yaw_matrix(50°)`. Verified both ways: unmutated **PASS**, mutant **FAIL at
 case 9**.
+
+**Two more holes, found by the first headset session (cases 11 and 12).** The
+near-vertical fallback *switched* sources at a threshold. With no roll the two
+sources agree exactly, so nothing measured it; with roll they differ by up to the
+roll angle, so crossing ±84.3° of pitch made the picture jump in yaw. Nothing
+drove pitch through that band until a mouse did. It now **blends** across
+84.3°→78.5°, and case 11 sweeps pitch at 25° of roll and fails on any step larger
+than 2°. Separately, `HT_REF_FULL` was tested only with `H = I` and had no
+runtime check at all — the least-checked path in the file, and the one a player
+switches to when yaw-only feels wrong. Case 12 composes a rolled and a yawed head
+onto a pitched reference against closed forms, and `ht_check_round_trip` gives
+full mode a runtime guard for the first time. Case 12 also asserts the **mode
+difference** — full tilts the horizon under a head yaw, yaw-only does not — so
+the HIGH-3 trade-off is now a test rather than a paragraph.
 
 **What case 5 does and does not pin.** The `det = +1` and `forward × left = up`
 criteria are **redundant**: with orthonormal rows, `cross_err = 0` already

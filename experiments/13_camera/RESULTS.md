@@ -418,14 +418,164 @@ validated. Do not read the yaw-only default as a conclusion.
 
 ### NOT verified — everything about behaviour
 
-The game was not run, by instruction, in either round. So: that `poses_attach()`
-succeeds inside BlackOps.exe; that xrizer/Monado report a usable HMD pose at all
-(exp 12's Test 1, still unrun, is the gate on this whole path); that the
-composed view looks right, is not mirrored, does not swim, and does not fight
-the mouse; that 90 frames is a sensible dropout hold; that 30 `Running_OK` poses
-is long enough for a runtime to settle; that discarding the game's pitch is the
-right call; and — new in this round — that `RCtrl+F9..F12` are actually free in
-Black Ops, that `GetAsyncKeyState` sees keys at all under Proton with the game
-holding raw input, and that `CAM_EYE_CENTRE` renders a sane mono view. The maths
-is executed and mutation-tested. **The behaviour is not tested at all**, and the
-controls added to make it testable are themselves untested.
+*(Superseded in part by §8: the first headset session confirmed `poses_attach()`,
+the self-check, the recentre and the pose pipeline. Everything below that it does
+not name is still untested.)*
+
+The game was not run, by instruction, in either round. So: that the composed view
+looks right, is not mirrored, does not swim, and does not fight the mouse; that
+90 frames is a sensible dropout hold; that 30 `Running_OK` poses is long enough
+for a runtime to settle; that `RCtrl+F9..F12` are actually free in Black Ops,
+that `GetAsyncKeyState` sees keys at all under Proton with the game holding raw
+input, and that `CAM_EYE_CENTRE` renders a sane mono view. The maths is executed
+and mutation-tested. **The behaviour is not tested at all**, and the controls
+added to make it testable are themselves untested.
+
+---
+
+## 8. "Head tracking worked until I moved the mouse" (first headset session)
+
+The plumbing worked: attached to the live session, self-check 10/10, recentred
+after 30 steady poses at `tracking_result 200`. Then that report.
+
+**The verdict is (b): nothing stopped. The mouse's PITCH was being thrown away,
+by design, and from inside a headset that is indistinguishable from head
+tracking failing.** The evidence is an exhaustive audit of every path that can
+skip the orientation write, and it is short enough to check.
+
+### Why it cannot be (a)
+
+`headtrack_apply` has exactly five ways to not write an orientation:
+
+| path | can a mouse move cause it? |
+|---|---|
+| `g_ht_dead` / `!g_ht_enable` / `!g_ht_math_ok` | No. Only 30 consecutive rejects, `RCtrl+F10`/`nohead.on`, or a load-time self-check failure — **all three log loudly.** |
+| eye slot out of range | No. Set by our own `R_RenderScene` hook. |
+| `!g_eyepose[eye].valid` | No. Written only from pose data; a mouse cannot invalidate a pose. Logs after 90 frames. |
+| `ht_build_reference` returned 0 | Only if the game's own view axis stops being orthonormal, which mouse input does not do. (The "both rows vertical" branch is unreachable for a real basis: if forward is vertical then left, being perpendicular to it, is horizontal.) |
+| composed basis rejected | `F = H·G` of two rotations is a rotation, and in yaw-only mode `G`'s third column is literally `(0,0,1)`, so the invariant cannot fail. Logs loudly regardless. |
+
+**The double-counting question specifically:** `g_yaw0` is written in exactly one
+place, from `hmd.cod_axis` — the head's yaw in *tracking* space. It is never a
+function of the game's heading. So the composed yaw is
+`head_yaw − g_yaw0 + game_yaw`, each term contributing once; a mouse turn moves
+`game_yaw` and nothing else. Nor is there a feedback path: the refdef axis is
+restored unconditionally under `if (moved)` with no `return` between the write
+and the restore, so `G` is always built from the *game's* axis and never from our
+own previous output. A stale `g_yaw0` shifts "straight ahead" by a constant; it
+cannot be *triggered* by a mouse turn, and it cannot accumulate.
+
+### What was actually happening
+
+In yaw-only mode the reference is the game's **heading only**. The game's pitch
+is discarded — but the engine's view angles still pitch, so the mouse moves the
+**gun, the crosshair, and the engine's idea of where you are looking** while the
+picture stays flat. Push the mouse up for a couple of seconds and the game
+believes you are staring at the sky while you see level ground; everything you
+then do behaves oddly, and the head still working is no comfort. That is the
+report, exactly.
+
+There is a second, sharper edge underneath it, which review predicted as LOW-9:
+once mouse pitch passes **±84.3°** the heading has to come from the left row
+instead of the forward row, and the old code **switched** at that threshold. The
+two sources agree only when there is no roll; under roll they differ by up to the
+roll angle, so crossing that band made the picture **jump in yaw**. Nothing drove
+pitch through that band until head tracking shipped and a mouse started driving
+it.
+
+### Fixed
+
+* **The band is blended, not switched** (`HT_BAND_LO`/`HT_BAND_HI`, 84.3°→78.5°):
+  continuous, no hysteresis state, and *exactly* the old behaviour outside the
+  band. exp 14 **case 11** sweeps pitch 70°→89.5° at 25° of roll and fails if the
+  heading moves more than 2° per 0.25° step; the old threshold form, reproduced
+  as a one-token mutation, **fails it**.
+* **The default is now `HT_REF_FULL`.** With the head level, full reference
+  renders bit-identically to the flat game, the mouse does what it always did,
+  and the scripted cameras (death cams, vehicle sections, the intro) survive.
+  Yaw-only is one keypress away. A *reasoned* default, not a validated one.
+* **`HT_REF_FULL` is no longer the least-checked path.** It had no runtime guard
+  at all (the yaw invariant says nothing there) and one offline case that tested
+  only `H = I` — least-checked exactly when a frustrated player switches to it.
+  It now has `ht_check_round_trip` (`F·Gᵀ` must come back as `H`; valid in **both**
+  modes; catches a transposed head, a swapped order, a non-rotation reference)
+  plus exp 14 **case 12**, which composes a *rolled* and a *yawed* head onto a
+  pitched reference against hand-derived closed forms.
+* **The mode difference is executable, not prose.** Case 12 asserts that a head
+  yaw over a pitched reference tilts the horizon in full mode (`F.left.z ≠ 0`)
+  and does not in yaw-only (`F.left.z == 0`). That is the whole HIGH-3 trade-off,
+  as a test.
+
+### The log now answers this question by itself
+
+Working out (a) vs (b) took an audit. It should have taken one line, so:
+
+* `*** ORIENTATION NOT APPLIED: <reason>` / `APPLIED (resumed)` — logged on the
+  **transition**, naming which of the five paths. If orientation ever stops there
+  is a line at the instant it stopped; if it never stops, the absence of that
+  line is the evidence.
+* `*** MOUSE PITCH IS BEING DISCARDED. The game's view is pitched %+.1f deg …` —
+  once, in words, the first time the game's pitch exceeds 20° in yaw-only mode,
+  naming the fix (`RCtrl+F11`).
+* `heartbeat: mode=…, oriented N/M views, game pitch …, head yaw/pitch …,
+  rejects …` every 1800 views (~8 s at 60 fps). `oriented == views` across a
+  session *is* the proof that nothing stopped.
+
+### `nocap.on` — confirmed, head tracking still samples
+
+The stable configuration needs `nocap.on`, which makes `bo1vr_capture_eye` return
+early. It is still **exported**, so `GetProcAddress` succeeds, `g_capture` is
+non-NULL, and the dual-render path runs as before. Independently of that,
+`headtrack_sample()` is the **first statement** in the hook — above the
+`g_capture` block and its early return — so every configuration samples,
+including the one where the export is missing entirely. That was the HIGH-1 fix,
+and it is what makes this robust to a change in `gameframe.asi`'s exports.
+
+One thing for whoever owns `gameframe.c` (not touched): with `nocap.on` the two
+scene renders still run, eye 0 then eye 1, and the Present-time resolve takes
+whatever the back buffer holds — always the **second** render. Head tracking is
+unaffected (one pose, both renders), but the stereo pair may not be what it looks
+like.
+
+### The playtest that settles it — please run in this order
+
+**A. Did anything ever stop? (30 seconds; answers (a) vs (b) for good.)**
+Load a map, look around with your head only, confirm it tracks. Now move the
+mouse — pitch it up and down deliberately. Look around with your head again.
+Quit and send `%TEMP%\bo1vr_camera.log`.
+*Tell me:* does the log contain any `ORIENTATION NOT APPLIED` line? If yes, paste
+it — that is (a), and the line names the cause. If no, and the `heartbeat` lines
+read `oriented N/N`, then orientation never stopped and this section is confirmed.
+
+**B. Does the mouse feel right now?** This build defaults to the full reference.
+*Tell me:* does moving the mouse up and down move the **picture** again, the way
+it does without the headset? (Expected yes. If the picture still will not pitch,
+that is a real bug and A's log will say why.)
+
+**C. Which reference do you actually want?** **RCtrl+F11** switches; play a
+minute in each.
+*Tell me three things:* (i) which one you can aim in; (ii) in **full**, hold the
+mouse pitched up and turn your head left and right — is the horizon tilt
+ignorable or nauseating?; (iii) in **yaw-only**, does anything go strange in a
+death cam or a scripted sequence?
+
+**D. The band fix (yaw-only only — full mode never uses that code).** In
+yaw-only, push the mouse all the way up until the gun points at the sky, then pan
+left and right.
+*Tell me:* does the picture snap or jump in yaw at any point? (Before this build
+it would, by up to the roll angle. Expected now: smooth.)
+
+`RCtrl+F9` recentres if "straight ahead" ends up wrong. `RCtrl+F10` turns head
+orientation off without losing stereo — a useful A/B if something feels wrong and
+you want to know whether the head is causing it.
+
+### Still needs a headset, after this round
+
+Everything in §8 above is reasoning over code plus offline tests. Unverified:
+that full reference actually feels correct; that the horizon tilt is tolerable;
+that the blended band is smooth *in practice* (the test proves the maths is
+continuous, not that the picture is); that mouse pitch through the full range
+does not expose something else; and that the new heartbeat and transition lines
+appear at all in a real log. The keybinds remain untested — if `RCtrl+F11` does
+nothing, use `yawonly.on` / `reffull.on` in `C:\bo1vr` instead, and please say so,
+because that would mean `GetAsyncKeyState` is not reaching us under Proton.

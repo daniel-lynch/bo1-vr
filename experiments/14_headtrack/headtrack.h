@@ -167,6 +167,27 @@ int ht_check_basis(const float M[9], ht_basis_t *r);
 int ht_check_yaw_invariant(const float F[9], const float H[9], float tol,
                            float *err);
 
+/* Does F really equal H*G?  Computes F*G^T and compares it with H, so it says
+ * something in BOTH reference modes -- it is the only runtime check HT_REF_FULL
+ * has, and HT_REF_FULL was the least-checked path in this file until it got one
+ * (LOW-8).  Returns 1 if it holds; `err` receives the largest difference.
+ *
+ * Catches: a transposed H (F*G^T comes back as H^T), a swapped multiplication
+ * order, a G that is not orthogonal, and arithmetic damage in ht_compose.
+ * Does NOT catch a G that is a perfectly good rotation but the WRONG one --
+ * every rotation round-trips.  Cases 1, 9 and 11 pin G.  Case 12 asserts both
+ * halves of that sentence, so neither can quietly stop being true. */
+int ht_check_round_trip(const float F[9], const float G[9], const float H[9],
+                        float tol, float *err);
+
+/* The band over which the near-vertical heading fallback takes over from the
+ * forward row, as the squared horizontal length of that row.  BLENDED across
+ * the band, not switched at a threshold -- see ht_build_reference.  0.04 is
+ * 78.5 degrees of pitch and 0.01 is 84.3; outside the band the heading is the
+ * forward row alone, exactly as before. */
+#define HT_BAND_HI 0.04f
+#define HT_BAND_LO 0.01f
+
 /* Offline check of everything above, against hand-derived closed forms rather
  * than against this file's own matrix code.  Returns 0 on success or the number
  * of the first failing case, with an explanation in `why` (may be NULL).
@@ -174,6 +195,6 @@ int ht_check_yaw_invariant(const float F[9], const float H[9], float tol,
 int ht_selfcheck(char *why, int cap);
 
 /* Number of cases ht_selfcheck runs, so a caller can report "n/n". */
-#define HT_SELFCHECK_CASES 10
+#define HT_SELFCHECK_CASES 12
 
 #endif /* BO1VR_HEADTRACK_H */

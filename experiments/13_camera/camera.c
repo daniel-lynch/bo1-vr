@@ -297,7 +297,28 @@ __declspec(dllexport) void bo1vr_camera_set_ipd_units(float u)
 
 static int   g_ht_math_ok;              /* ht_selfcheck passed at load        */
 static int   g_ht_enable = 1;
-static int   g_ht_mode   = HT_REF_YAW_ONLY;
+/* DEFAULT: HT_REF_FULL, changed after the first headset session.
+ *
+ * Yaw-only shipped as the default because it keeps the horizon level, which is
+ * the right behaviour for a VR game -- but Black Ops is not a VR game, and in
+ * yaw-only mode the game's PITCH never reaches the picture. The mouse still
+ * pitches the player's actual view angles, so the gun, the crosshair and the
+ * engine's idea of where you are looking all move vertically while the picture
+ * stays flat. The first field report was "head tracking worked until I moved
+ * the mouse", which is what that feels like from inside a headset.
+ *
+ * Full reference makes the mouse do exactly what it does in the flat game and
+ * adds the head on top: with the head level the view is bit-identical to what
+ * the engine would have rendered on its own. It also keeps the scripted
+ * cameras -- death cams, vehicle sections, the intro -- which yaw-only throws
+ * away. The cost is that a head YAW held under a mouse PITCH tilts the horizon,
+ * which case 12 now measures rather than merely describing.
+ *
+ * This is a REASONED default, not a validated one. Both modes are one keypress
+ * apart (RCtrl+F11) precisely so the question can be settled by a person in a
+ * headset rather than by argument. */
+static int   g_ht_mode   = HT_REF_FULL;
+static int   g_pitch_warned;
 static int   g_ht_pos;                  /* room-scale translation: OFF, see below */
 static int   g_ht_bound;                /* poses_attach() succeeded           */
 static int   g_ht_dead;                 /* disabled for the session           */
@@ -497,18 +518,30 @@ static void headtrack_controls(void)
      * rate would be four syscalls per frame for a setting nobody changes. */
     if ((ticks++ % 90) == 0) {
         int nohead  = switch_on("nohead.on");
-        int reffull = switch_on("reffull.on");
         int room    = switch_on("roomscale.on");
+        /* The mode files name a mode outright rather than toggling a flag,
+         * because the DEFAULT moved from yaw-only to full and a file whose
+         * absence meant "yaw-only" would silently have changed meaning under
+         * anyone who already had one. yawonly.on wins if both are present. */
+        int yawonly = switch_on("yawonly.on");
+        int reffull = switch_on("reffull.on");
+        int want    = yawonly ? HT_REF_YAW_ONLY : (reffull ? HT_REF_FULL : g_ht_mode);
+        int modesel = yawonly ? 1 : (reffull ? 2 : 0);
 
         if (!file_state_known) {
             file_state_known = 1;
-            was_nohead = nohead; was_reffull = reffull; was_room = room;
+            was_nohead = nohead; was_reffull = modesel; was_room = room;
             if (nohead)  { g_ht_enable = 0; changed = 1; }
-            if (reffull) { g_ht_mode = HT_REF_FULL; changed = 1; }
+            if (modesel && want != g_ht_mode) { g_ht_mode = want; changed = 1; }
             if (room)    { g_ht_pos = 1; changed = 1; }
         } else {
             if (nohead != was_nohead)   { was_nohead = nohead;   g_ht_enable = !nohead; changed = 1; }
-            if (reffull != was_reffull) { was_reffull = reffull; g_ht_mode = reffull ? HT_REF_FULL : HT_REF_YAW_ONLY; changed = 1; }
+            if (modesel != was_reffull) {
+                was_reffull = modesel;
+                /* Removing both files leaves the mode where it is rather than
+                 * snapping back to a default mid-session. */
+                if (modesel && want != g_ht_mode) { g_ht_mode = want; changed = 1; }
+            }
             if (room != was_room)       { was_room = room;       g_ht_pos = room; changed = 1; }
         }
         if (switch_on("recentre.on")) {
@@ -519,6 +552,37 @@ static void headtrack_controls(void)
 
     if (changed)
         ht_log_state("changed at run time");
+}
+
+/* ============ IS ORIENTATION BEING APPLIED, RIGHT NOW, OR NOT? ==========
+ *
+ * The field report was "head tracking worked until I moved the mouse", and
+ * answering it took an audit of every early return in this file. The log should
+ * have answered it. Every path that skips the orientation write now names
+ * itself at the moment the answer CHANGES -- not once at startup, not every
+ * frame, but on the transition. If orientation ever stops there is a line at the
+ * instant it stopped, saying which path; if it never stops, the absence of that
+ * line is itself the evidence, and the report is about what the picture DOES
+ * rather than about the hook failing.
+ *
+ * That distinction -- a bug, versus the yaw-only reference behaving exactly as
+ * designed -- should never again need an argument to settle.
+ */
+static int  g_ht_applying = -1;         /* -1 unknown, 0 no, 1 yes            */
+static long g_ht_flips;
+static long g_views, g_views_oriented;
+static float g_last_game_pitch, g_last_head_yaw, g_last_head_pitch;
+
+static void ht_note(int applying, const char *why)
+{
+    if (g_ht_applying == applying)
+        return;
+    g_ht_applying = applying;
+    if (++g_ht_flips <= 40)
+        camlog("*** ORIENTATION %s: %s",
+               applying ? "APPLIED (resumed)" : "NOT APPLIED", why);
+    else if (g_ht_flips == 41)
+        camlog("*** orientation is flapping; further transition lines suppressed");
 }
 
 static void ht_die(const char *why)
@@ -736,21 +800,28 @@ static int headtrack_apply(unsigned char *rd, int eye, int *did_pos)
     const float *game = (const float *)(rd + RD_VIEWAXIS);
     float G[9], H[9], F[9], off[3], world[3] = { 0.0f, 0.0f, 0.0f };
     ht_basis_t rep;
-    float inv_err = 0.0f;
+    float inv_err = 0.0f, rt_err = 0.0f;
     int   inv_ok = 1, i;
     float *org;
 
     *did_pos = 0;
-    if (g_ht_dead || !g_ht_enable || !g_ht_math_ok)
+    g_views++;
+    if (g_ht_dead || !g_ht_enable || !g_ht_math_ok) {
+        ht_note(0, g_ht_dead ? "disabled for the session after repeated rejects"
+                : !g_ht_math_ok ? "the maths self-check failed at load"
+                : "switched off (RCtrl+F10 or nohead.on)");
         return 0;
+    }
     /* CAM_EYE_CENTRE is a real slot here, not just at the call site: it is the
      * head with a zero eye offset, and it is what makes head tracking visible
      * with gameframe.asi absent. Rejecting it here would reintroduce the exact
      * silent-nothing this round was sent to fix, one layer further down. */
     if (eye < CAM_EYE_LEFT || eye > CAM_EYE_CENTRE)
         return 0;
-    if (!g_eyepose[eye].valid)
+    if (!g_eyepose[eye].valid) {
+        ht_note(0, "no valid HMD pose (tracking lost, or the runtime stopped)");
         return 0;
+    }
 
     /* The game's own view axis is the reference frame. If it is not a basis we
      * are looking at the wrong memory or at a torn read -- leave everything
@@ -761,6 +832,7 @@ static int headtrack_apply(unsigned char *rd, int eye, int *did_pos)
             moaned = 1;
             check_axis("refdef axis REJECTED as a reference:", game);
         }
+        ht_note(0, "the game's own view axis is not a valid basis");
         return 0;
     }
 
@@ -769,10 +841,23 @@ static int headtrack_apply(unsigned char *rd, int eye, int *did_pos)
     ht_rotate_rows_yaw(g_eyepose[eye].axis, -g_yaw0, H);
     ht_compose(H, G, F);
 
-    if (g_ht_mode == HT_REF_YAW_ONLY)
+    /* THE ROUND TRIP HOLDS IN BOTH MODES. F*G^T must come back as H, which
+     * catches a transposed head, a swapped order, a non-rotation reference and
+     * arithmetic damage -- and unlike the yaw invariant it still says something
+     * when the reference is the game's full orientation. Until it existed,
+     * HT_REF_FULL had no runtime guard at all (LOW-8), which made the mode a
+     * player switches to when yaw-only feels wrong also the mode with the least
+     * checking behind it. */
+    if (!ht_check_round_trip(F, G, H, 1e-3f, &rt_err))
+        inv_ok = 0;
+    if (inv_ok && g_ht_mode == HT_REF_YAW_ONLY)
         inv_ok = ht_check_yaw_invariant(F, H, 1e-3f, &inv_err);
     if (!ht_check_basis(F, &rep) || !inv_ok) {
         ht_reject(&rep, inv_err, g_ht_mode == HT_REF_YAW_ONLY);
+        if (rt_err > 1e-3f)
+            camlog("*** round trip |F*G^T - H| = %.6f (want 0): the composition "
+                   "and the reference disagree", rt_err);
+        ht_note(0, "the composed basis failed its checks");
         return 0;
     }
     g_ht_fail = 0;
@@ -814,6 +899,46 @@ static int headtrack_apply(unsigned char *rd, int eye, int *did_pos)
                *did_pos ? "from the headset's own eye-to-head"
                         : "NOT applied -- assumed IPD shift instead");
     }
+
+    /* --- the running answer to "is it working?" ------------------------
+     *
+     * game pitch  is what the MOUSE is doing vertically, straight off the
+     *             refdef: asin of the forward row's z.
+     * head pitch  is what the HEAD is doing, in the recentred reference frame.
+     * In yaw-only mode the first of those does not reach the picture at all,
+     * and that is the single fact the field report turns on. */
+    g_last_game_pitch = asinf(game[2] > 1.0f ? 1.0f : (game[2] < -1.0f ? -1.0f : game[2]))
+                        * 57.29578f;
+    g_last_head_yaw   = ht_yaw_of(H) * 57.29578f;
+    g_last_head_pitch = asinf(H[2] > 1.0f ? 1.0f : (H[2] < -1.0f ? -1.0f : H[2]))
+                        * 57.29578f;
+    g_views_oriented++;
+    ht_note(1, "composed basis accepted");
+
+    /* THE MOUSE IS PITCHING AND THE PICTURE IS NOT. Said once, in words, the
+     * first time it is unmistakably happening. "head tracking worked until I
+     * moved the mouse" should have been one line in a log, not an audit. */
+    if (g_ht_mode == HT_REF_YAW_ONLY && !g_pitch_warned &&
+        (g_last_game_pitch > 20.0f || g_last_game_pitch < -20.0f)) {
+        g_pitch_warned = 1;
+        camlog("*** MOUSE PITCH IS BEING DISCARDED. The game's view is pitched "
+               "%+.1f deg but yaw-only mode keeps the picture level, so the mouse "
+               "moves the GUN vertically and not the PICTURE.", g_last_game_pitch);
+        camlog("*** This is the yaw-only reference working as designed, not a "
+               "tracking failure. RCtrl+F11 (or reffull.on) switches to the full "
+               "reference, where mouse pitch moves the picture as it always did.");
+    }
+
+    /* A periodic line, so a playtest log answers "did it ever stop?" by
+     * inspection rather than by reasoning about early returns. ~4 views per
+     * frame, so this is roughly every 8 seconds at 60 fps. */
+    if ((g_views % 1800) == 0)
+        camlog("heartbeat: mode=%s, oriented %ld/%ld views, game pitch %+.1f deg, "
+               "head yaw %+.1f pitch %+.1f deg, rejects %ld, recentre yaw %+.1f deg",
+               g_ht_mode == HT_REF_FULL ? "full" : "yaw-only",
+               g_views_oriented, g_views, g_last_game_pitch,
+               g_last_head_yaw, g_last_head_pitch, g_ht_fail_total,
+               g_yaw0 * 57.29578f);
 
     memcpy(rd + RD_VIEWAXIS, F, sizeof F);
     return 1;

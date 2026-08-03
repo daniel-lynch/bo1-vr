@@ -160,6 +160,29 @@ int ht_check_yaw_invariant(const float F[9], const float H[9], float tol,
     return e <= tol;
 }
 
+int ht_check_round_trip(const float F[9], const float G[9], const float H[9],
+                        float tol, float *err)
+{
+    /* T = F * G^T.  Since F was built as H*G and G is a rotation, T must come
+     * back as H exactly.  Unlike the yaw invariant this says something in BOTH
+     * reference modes, and it is the only runtime check HT_REF_FULL has. */
+    float e = 0.0f;
+    int i, j, k;
+
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+            float t = 0.0f;
+            float d;
+            for (k = 0; k < 3; k++)
+                t += F[i*3 + k] * G[j*3 + k];
+            d = fabsf(t - H[i*3 + j]);
+            if (d > e) e = d;
+        }
+    }
+    if (err) *err = e;
+    return e <= tol;
+}
+
 int ht_build_reference(const float game_axis[9], int mode, float out_G[9])
 {
     float hx, hy, n2, inv, c, s;
@@ -179,19 +202,56 @@ int ht_build_reference(const float game_axis[9], int mode, float out_G[9])
         return 1;
     }
 
-    /* Heading from the forward row's horizontal part. */
-    hx = game_axis[0];
-    hy = game_axis[1];
-    n2 = hx*hx + hy*hy;
-    if (n2 < 0.01f) {
-        /* Looking near-vertically: forward has almost no heading left in it.
-         * The LEFT row is horizontal exactly when forward is vertical, and it
-         * carries the same heading: left = (-sin, cos, 0). */
-        hx =  game_axis[4];
-        hy = -game_axis[3];
+    /* THE HEADING, AND THE BAND WHERE IT HAS TO COME FROM SOMEWHERE ELSE.
+     *
+     * Normally the heading is the forward row's horizontal part.  Looking
+     * near-vertically there is almost none of it left, and the LEFT row -- which
+     * is horizontal exactly when forward is vertical -- carries the heading
+     * instead, as left = (-sin, cos, 0).
+     *
+     * The first version SWITCHED between the two at n2 < 0.01.  That is fine
+     * while the two agree, which they do whenever the view has no roll.  Under
+     * ROLL they do not: at the pole the left row's heading is off by exactly the
+     * roll angle (yaw and roll are degenerate there), so the switch was a
+     * discontinuity -- the picture jumps in yaw as the player crosses +-84.3
+     * degrees of pitch.  Nothing drove pitch through that band until head
+     * tracking shipped and a MOUSE started driving it.  Flagged as LOW-9 in
+     * review; case 11 now measures it.
+     *
+     * So: BLEND, do not switch.  The weight ramps across a band instead of
+     * flipping at a threshold, which is continuous, needs no hysteresis state
+     * (this function is pure, and per-frame state here would be a lie the moment
+     * two views disagreed), and is EXACTLY the old behaviour outside the band --
+     * below 78.5 degrees of pitch the forward row is used alone, as before. */
+    {
+        float fx = game_axis[0], fy = game_axis[1];    /* forward's heading */
+        float lx = game_axis[4], ly = -game_axis[3];   /* the left row's    */
+        float n2f = fx*fx + fy*fy;
+        float n2l = lx*lx + ly*ly;
+        float w;
+
+        if (n2f >= HT_BAND_HI)      w = 1.0f;          /* forward alone     */
+        else if (n2f <= HT_BAND_LO) w = 0.0f;          /* left row alone    */
+        else                        w = (n2f - HT_BAND_LO) / (HT_BAND_HI - HT_BAND_LO);
+
+        hx = hy = 0.0f;
+        if (w > 0.0f && n2f > 1e-12f) {
+            float k = w / sqrtf(n2f);
+            hx += fx * k; hy += fy * k;
+        }
+        if (w < 1.0f && n2l > 1e-12f) {
+            float k = (1.0f - w) / sqrtf(n2l);
+            hx += lx * k; hy += ly * k;
+        }
         n2 = hx*hx + hy*hy;
-        if (n2 < 0.01f)
-            return 0;          /* both vertical: impossible for a real basis */
+        /* The two can only cancel if they disagree by 180 degrees, which needs a
+         * roll near +-180 at the pole.  Prefer a defined answer to none: take
+         * the left row, the one that still means something up there. */
+        if (n2 < 1e-6f) {
+            hx = lx; hy = ly; n2 = n2l;
+            if (n2 < 1e-6f)
+                return 0;      /* both vertical: impossible for a real basis */
+        }
     }
     inv = 1.0f / sqrtf(n2);
     c = hx * inv;
@@ -653,6 +713,211 @@ int ht_selfcheck(char *why, int cap)
         if (ht_build_reference(bad, HT_REF_YAW_ONLY, W)) {
             ht_copy_why(why, cap, "case 10: a MIRRORED view axis was accepted as a reference");
             return 10;
+        }
+    }
+
+    /* --- 11.  THE NEAR-VERTICAL BAND IS CONTINUOUS, WITH ROLL. ---------
+     *
+     * The heading has to change hands somewhere near the pole, and until now it
+     * changed hands ABRUPTLY, at n2 < 0.01.  With no roll that is invisible --
+     * the two sources agree exactly -- which is why the first version of case 9
+     * (roll 0) could not see it.  With roll they disagree by up to the roll
+     * angle, so the switch made the picture JUMP in yaw as pitch crossed 84.3
+     * degrees.  Nothing drove pitch through that band until a mouse did.
+     *
+     * Sweep pitch from 70 to 89.5 degrees at a fixed roll and require the
+     * reference heading to move smoothly.  A 0.25-degree step of pitch must not
+     * move the heading by more than 2 degrees; the switching version moved it by
+     * the whole roll angle in one step. */
+    {
+        const float roll = DEG(25), yaw0 = DEG(40);
+        float prev = 0.0f;
+        int   first = 1;
+        float worst = 0.0f;
+        float p;
+
+        for (p = 70.0f; p <= 89.5f; p += 0.25f) {
+            float base[9], rollm[9], game[9], y;
+            /* A view yawed, pitched, and then ROLLED about its own forward. */
+            ht_euler(yaw0, DEG(p), base);
+            {
+                float cr = cosf(roll), sr = sinf(roll);
+                rollm[0] = 1; rollm[1] = 0;   rollm[2] = 0;
+                rollm[3] = 0; rollm[4] = cr;  rollm[5] = sr;
+                rollm[6] = 0; rollm[7] = -sr; rollm[8] = cr;
+            }
+            ht_compose(rollm, base, game);
+            if (!ht_check_basis(game, &rep)) {
+                ht_copy_why(why, cap, "case 11: the swept test basis is not a basis");
+                return 11;
+            }
+            if (!ht_build_reference(game, HT_REF_YAW_ONLY, G)) {
+                ht_copy_why(why, cap, "case 11: no reference inside the near-vertical band");
+                return 11;
+            }
+            if (!ht_check_basis(G, &rep)) {
+                ht_copy_why(why, cap, "case 11: reference inside the band is not a basis");
+                return 11;
+            }
+            y = ht_yaw_of(G);
+            if (!first) {
+                float d = fabsf(y - prev);
+                if (d > HT_PI) d = 2.0f * HT_PI - d;    /* across the wrap */
+                if (d > worst) worst = d;
+            }
+            first = 0;
+            prev = y;
+        }
+        if (worst > DEG(2.0f)) {
+            ht_copy_why(why, cap,
+                "case 11: the heading JUMPS inside the near-vertical band -- the "
+                "fallback is switching rather than blending (LOW-9)");
+            return 11;
+        }
+        /* And outside the band nothing has changed: at a sane pitch the heading
+         * is still exactly the forward row's. */
+        {
+            float game[9];
+            ht_euler(DEG(-63), DEG(20), game);
+            if (!ht_build_reference(game, HT_REF_YAW_ONLY, G)) {
+                ht_copy_why(why, cap, "case 11: no reference at an ordinary pitch");
+                return 11;
+            }
+            ht_yaw_matrix(DEG(-63), E);
+            if (!ht_close9(G, E, EPS)) {
+                ht_copy_why(why, cap,
+                    "case 11: the blend changed the heading OUTSIDE the band -- it "
+                    "must be the forward row alone there");
+                return 11;
+            }
+        }
+    }
+
+    /* --- 12.  HT_REF_FULL, with a head that is not the identity. -------
+     *
+     * Until now full mode was tested only with H = I (case 10), i.e. the one
+     * input for which the composition cannot be wrong, and it has no yaw
+     * invariant at run time.  It was the least-checked path in the file, and it
+     * is the one a player switches to when yaw-only feels wrong -- so it was
+     * least-checked exactly when it mattered most.  Review called this LOW-8.
+     *
+     * Two closed forms, both written as explicit combinations of G's ROWS so
+     * that ht_compose cannot appear on both sides of the comparison. */
+    {
+        float game[9], roll[9];
+        const float r = DEG(30), y = DEG(-70), p = DEG(35);
+        float cr = cosf(r), sr = sinf(r);
+        float rt_err = 0.0f;
+        int i;
+
+        ht_euler(y, p, game);
+        if (!ht_build_reference(game, HT_REF_FULL, G)) {
+            ht_copy_why(why, cap, "case 12: full mode rejected a valid view axis");
+            return 12;
+        }
+
+        /* (a) A head ROLLED about its forward axis, over a pitched reference.
+         *     forward is untouched; left and up rotate in their own plane. */
+        roll[0] = 1; roll[1] = 0;   roll[2] = 0;
+        roll[3] = 0; roll[4] = cr;  roll[5] = sr;
+        roll[6] = 0; roll[7] = -sr; roll[8] = cr;
+        ht_compose(roll, G, F);
+        for (i = 0; i < 3; i++) {
+            E[0 + i] = G[0 + i];
+            E[3 + i] =  cr * G[3 + i] + sr * G[6 + i];
+            E[6 + i] = -sr * G[3 + i] + cr * G[6 + i];
+        }
+        if (!ht_close9(F, E, EPS)) {
+            ht_copy_why(why, cap, "case 12: full mode composes a rolled head wrongly");
+            return 12;
+        }
+        if (!ht_check_basis(F, &rep)) {
+            ht_copy_why(why, cap, rep.mirrored
+                ? "case 12: full mode produced a MIRRORED basis"
+                : "case 12: full mode produced a non-orthonormal basis");
+            return 12;
+        }
+
+        /* (b) THE MODE DIFFERENCE, MADE EXECUTABLE.  A head YAW over a pitched
+         *     reference tilts the horizon in full mode and does not in yaw-only
+         *     mode.  That is the whole HIGH-3 trade-off, and it is asserted here
+         *     rather than described in prose that nobody can check.
+         *
+         *     full:     F.left = -sin(t)*G.fwd + cos(t)*G.left, and G.fwd has a
+         *               non-zero z when the game is pitched, so F.left.z != 0.
+         *     yaw-only: G.fwd.z and G.left.z are both 0, so F.left.z == 0. */
+        {
+            const float t = DEG(50);
+            float ct = cosf(t), st = sinf(t);
+            float Gy[9], Fy[9];
+
+            ht_yaw_matrix(t, H);
+            ht_compose(H, G, F);
+            for (i = 0; i < 3; i++) {
+                E[0 + i] =  ct * G[0 + i] + st * G[3 + i];
+                E[3 + i] = -st * G[0 + i] + ct * G[3 + i];
+                E[6 + i] =  G[6 + i];
+            }
+            if (!ht_close9(F, E, EPS)) {
+                ht_copy_why(why, cap, "case 12: full mode composes a yawed head wrongly");
+                return 12;
+            }
+            if (fabsf(F[5]) < 0.1f) {
+                ht_copy_why(why, cap,
+                    "case 12: full mode did NOT tilt the horizon under a head yaw "
+                    "-- the documented difference between the modes is gone");
+                return 12;
+            }
+            if (!ht_build_reference(game, HT_REF_YAW_ONLY, Gy)) {
+                ht_copy_why(why, cap, "case 12: yaw-only rejected the same view axis");
+                return 12;
+            }
+            ht_compose(H, Gy, Fy);
+            if (fabsf(Fy[5]) > 1e-4f) {
+                ht_copy_why(why, cap,
+                    "case 12: yaw-only tilted the horizon -- it must not");
+                return 12;
+            }
+        }
+
+        /* (c) The runtime round-trip check: the only guard full mode has. */
+        ht_compose(H, G, F);
+        if (!ht_check_round_trip(F, G, H, 1e-4f, &rt_err)) {
+            ht_copy_why(why, cap, "case 12: the round-trip check fails on a CORRECT composition");
+            return 12;
+        }
+        {
+            float HT[9], T2[9];
+            int j;
+            for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) HT[i*3+j] = H[j*3+i];
+            ht_compose(HT, G, T2);
+            if (ht_check_round_trip(T2, G, H, 1e-4f, 0)) {
+                ht_copy_why(why, cap, "case 12: the round-trip check accepts a TRANSPOSED head");
+                return 12;
+            }
+            ht_compose(G, H, T2);
+            if (ht_check_round_trip(T2, G, H, 1e-4f, 0)) {
+                ht_copy_why(why, cap, "case 12: the round-trip check accepts a SWAPPED order");
+                return 12;
+            }
+            /* A non-orthogonal reference: F*G^T cannot come back as H. */
+            memcpy(T2, G, sizeof T2);
+            T2[0] *= 1.5f; T2[1] *= 1.5f; T2[2] *= 1.5f;
+            ht_compose(H, T2, F);
+            if (ht_check_round_trip(F, T2, H, 1e-4f, 0)) {
+                ht_copy_why(why, cap, "case 12: the round-trip check accepts a NON-ROTATION reference");
+                return 12;
+            }
+            /* CHARACTERISATION: it cannot see a wrong-but-valid rotation.
+             * Same shape as case 6's blindness assertion, same reason. */
+            ht_yaw_matrix(DEG(11), T2);
+            ht_compose(H, T2, F);
+            if (!ht_check_round_trip(F, T2, H, 1e-4f, 0)) {
+                ht_copy_why(why, cap,
+                    "case 12: the round-trip check now reacts to WHICH rotation G is "
+                    "-- headtrack.h says it cannot; update it deliberately");
+                return 12;
+            }
         }
     }
 
