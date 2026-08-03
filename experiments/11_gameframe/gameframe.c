@@ -158,6 +158,7 @@ static volatile LONG g_gd_calls;
 static volatile LONG g_gd_last;
 static volatile LONG g_gd_sfalse, g_gd_sok, g_gd_other;
 static void read_opts(void);
+static HRESULT resolve_cropped(IDirect3DSurface9 *src, IDirect3DSurface9 *dst);
 static int  opt(const char *name);
 static IDirect3DSurface9 *g_probe_rt;   /* probe.on / probe2.on target */
 
@@ -1057,15 +1058,7 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
      * So: resolve the whole MSAA surface into a plain intermediate first (no
      * rect, which is legal), then crop from that (not multisampled, so a rect
      * is fine). */
-    if (g_have_crop && g_resolve) {
-        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_resolve, NULL, D3DTEXF_NONE);
-        if (SUCCEEDED(hr))
-            hr = IDirect3DDevice9_StretchRect(g_dev, g_resolve, &g_crop,
-                                              g_eyes[eye][g_buf].surf, NULL, D3DTEXF_LINEAR);
-    } else {
-        hr = IDirect3DDevice9_StretchRect(g_dev, rt, NULL, g_eyes[eye][g_buf].surf, NULL,
-                                          D3DTEXF_LINEAR);
-    }
+    hr = resolve_cropped(rt, g_eyes[eye][g_buf].surf);
     if (FAILED(hr)) {
         if (g_captured < 4) glog("capture eye %d StretchRect hr=0x%08lx", eye, (unsigned long)hr);
     } else {
@@ -1076,6 +1069,34 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
         InterlockedIncrement(&g_captured);
     }
     IDirect3DSurface9_Release(rt);
+}
+
+
+/* THE ASPECT FIX, SHARED BY BOTH CAPTURE PATHS.
+ *
+ * This lived only inside bo1vr_capture_eye, so the moment nocap.on routed the
+ * pipeline through the Present-time resolve -- which is what the fix for
+ * trigger 1 does, and what the stable configuration ships -- the crop and the
+ * widened FOV silently stopped happening and the 1.96x squeeze came straight
+ * back. It was reported from a headset as "still feels zoomed", which is what a
+ * quietly-skipped correction feels like from the inside.
+ *
+ * Two steps, because the source is MULTISAMPLED: D3D9 will not copy a
+ * sub-rectangle of a multisampled surface, and passing a rect anyway does not
+ * fail -- StretchRect returns success and produces nothing. Resolve the whole
+ * surface into a plain intermediate first, then crop from that. */
+static HRESULT resolve_cropped(IDirect3DSurface9 *src, IDirect3DSurface9 *dst)
+{
+    HRESULT hr;
+
+    if (g_have_crop && g_resolve) {
+        hr = IDirect3DDevice9_StretchRect(g_dev, src, NULL, g_resolve, NULL, D3DTEXF_NONE);
+        if (SUCCEEDED(hr))
+            hr = IDirect3DDevice9_StretchRect(g_dev, g_resolve, &g_crop, dst, NULL,
+                                              D3DTEXF_LINEAR);
+        return hr;
+    }
+    return IDirect3DDevice9_StretchRect(g_dev, src, NULL, dst, NULL, D3DTEXF_LINEAR);
 }
 
 /* Per-eye tanHalfFov for camera.asi. Returns 0 until OpenVR is up. */
@@ -1314,10 +1335,15 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * channel to ask. */
     if (n == 1) {
         D3DSURFACE_DESC d;
-        if (SUCCEEDED(IDirect3DSurface9_GetDesc(bb, &d)))
+        if (SUCCEEDED(IDirect3DSurface9_GetDesc(bb, &d))) {
             glog("source backbuffer %ux%u fmt=%d MULTISAMPLE=%d pool=%d -> per-eye %ux%u",
                  d.Width, d.Height, (int)d.Format, (int)d.MultiSampleType, (int)d.Pool,
                  g_rw, g_rh);
+            /* Set the crop up HERE too. It used to happen only in
+             * bo1vr_capture_eye, so the Present-time path ran uncorrected. */
+            if (!g_have_crop)
+                setup_crop(d.Width, d.Height);
+        }
     }
 
     /* TRUE DUAL VIEW when camera.asi has already given us both eyes.
@@ -1350,7 +1376,8 @@ static void do_frame(IDirect3DSwapChain9 *sc)
          * (A proper floating screen in world space is the eventual answer for
          * menus; this at least makes them coherent.) */
         for (i = 0; i < 2; i++) {
-            hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i][g_buf].surf, NULL,
+            hr = resolve_cropped(bb, g_eyes[i][g_buf].surf);
+            if (0) hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[i][g_buf].surf, NULL,
                                               D3DTEXF_LINEAR);
             if (FAILED(hr)) break;
         }
@@ -1368,7 +1395,8 @@ static void do_frame(IDirect3DSwapChain9 *sc)
          * nothing. */
         g_flat_frames++;
     } else {
-        hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye][g_buf].surf, NULL,
+        hr = resolve_cropped(bb, g_eyes[g_cur_eye][g_buf].surf);
+        if (0) hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye][g_buf].surf, NULL,
                                           D3DTEXF_LINEAR);
         if (FAILED(hr)) {
             if (n < 3) glog("StretchRect eye %d hr=0x%08lx", g_cur_eye, (unsigned long)hr);
