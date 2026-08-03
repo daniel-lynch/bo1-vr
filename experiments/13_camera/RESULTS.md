@@ -103,6 +103,10 @@ camera.c    the hook: two asm thunks, a C body, and the self-checks
 Makefile    `make`, `make install` (-> C:\bo1vr); verify disassembles the thunks
 ```
 
+Since §7 it also compiles and links two modules from sources it does not own —
+`../12_poses/poses.c` and `../14_headtrack/headtrack.c` — into its own `out/`.
+Neither source directory is written to.
+
 Tested with `gameframe.asi` moved aside, so the only variable was this hook.
 
 ---
@@ -149,7 +153,7 @@ place that sees frame boundaries. `R_SetViewParms` runs more than once per frame
 `GetProcAddress` once. A small explicit interface, rather than a shared global
 in one of the two DLLs.
 
-### Deliberately position-only
+### Deliberately position-only — SUPERSEDED by §7, kept for the reasoning
 
 The camera is shifted sideways by half an IPD along the view's own **left** axis
 and nothing else. Orientation is untouched.
@@ -176,3 +180,252 @@ in the code. `bo1vr_camera_set_ipd_units()` changes it.
 
 That the result **looks** correct in a headset: real parallax, correct eye
 order, comfortable depth. That is BAC-282 and it needs hardware on a head.
+
+---
+
+## 7. Head orientation, wired (BAC-282)
+
+The hook now turns the camera as well as moving it. `refdef+0x34` is written
+with the HMD's orientation composed onto the game's heading, and restored after
+`call_original` for the same reason the origin always was.
+
+**Nothing in this section has been run.** The game process was held by another
+workstream throughout; this is a build-and-static-verify change. What *was*
+executed is the maths, offline — see `experiments/14_headtrack/RESULTS.md`.
+
+### The composition, in one line
+
+```
+F = H * G            written to refdef.viewaxis, then restored
+```
+
+* `H` — the eye basis from exp 12 (`poses_pose_t.cod_axis`), rows
+  forward/left/up in **tracking** space, already in the CoD convention. exp 12's
+  transform is reused verbatim; there is no second coordinate convention in the
+  tree.
+* `G` — the **reference** basis, built from `refdef.viewaxis`. By default it is
+  the game's *heading only*: a pure yaw about world up, with the game's pitch
+  and roll discarded and taken from the head instead. A full-orientation
+  reference makes head yaw rotate about a mouse-tilted axis, and the horizon
+  rolls when you turn your head. `bo1vr_camera_set_ref_mode(HT_REF_FULL)`
+  selects the other behaviour for comparison in a headset.
+* `F` — the head in world space.
+
+`H = I` gives `F = G`, i.e. the game's own view untouched. The order is fixed by
+the row convention (rows are the child frame's axes in parent coordinates), not
+by taste; `G * H` would apply the game's rotation in head-local coordinates.
+
+The eye offset now comes from the **headset's own `GetEyeToHeadTransform`**
+rather than the assumed 2.6-unit IPD, rotated into the world by `G^T`. The
+assumed shift remains as the fallback whenever there is no pose — and whenever
+the runtime's offsets fail their sanity check.
+
+### Which check catches what — the whole point of the exercise
+
+§6 argued that a wrong rotation basis is dangerous because it *survives
+scrutiny*. So the checks are built to fail on the specific faults, and were
+mutation-tested to prove it (nine mutations, nine reds — table in exp 14 §2.1):
+
+* **A transpose, or the wrong multiplication order** → `headtrack_mathcheck`
+  **case 3**: game yawed 90°, head pitched 40°, no head yaw. Yaw and pitch do
+  not commute, so `G*H`, `H^T*G`, `H*G^T` and `(H*G)^T` all differ from the
+  hand-derived closed form — and the case *computes all four* and requires each
+  to be ≥ 0.1 away, so its discriminating power is tested rather than asserted.
+  A pure-yaw test would have passed every one of them.
+* **A sign error, i.e. a mirror** → `ht_check_basis`, which requires
+  **det = +1** *and* `forward × left = up`; **case 5** feeds it a mirrored basis
+  and fails if it is accepted.
+* **At run time, on live data** → the yaw invariant, which watches exactly one
+  thing: that `ht_compose` carried `H`'s third column through unchanged. In
+  yaw-only mode that column must survive, so a **transposed `H`**, a **swapped
+  order**, and arithmetic damage inside `ht_compose` are all caught, and case 6
+  proves each is rejected. **It is blind to every error in `G`** — the yaw-only
+  branch writes `G`'s third column as the literal `(0,0,1)`, so `H·Gᵀ`,
+  `H·yaw(wrong angle)` and even `H·I` were all measured at `err = 0.000000` and
+  **accepted**. `G` is pinned offline by cases 1 and 9 instead. An earlier
+  version of this section claimed the invariant caught "any sign error in the
+  yaw matrix"; that was false, it was caught in review, and case 6 now pins the
+  blindness so the claim cannot silently drift again.
+
+**A real defect this turned up in the existing code.** §1's `check_axis` — the
+function this experiment's whole credibility rested on — tested
+`fabsf(fabsf(det) - 1) < 1e-3`, i.e. `|det| = 1`. That is **true of a mirrored
+basis**, which is exactly what a single sign error in a rotation produces. It
+would have reported `ORTHONORMAL (offsets confirmed)` on an inside-out world.
+It now calls `ht_check_basis`, which requires `det = +1` **and**
+`forward × left = up`.
+
+Precisely what the suite pins, since an earlier version of this section got it
+wrong: those two criteria are **redundant**. With orthonormal rows,
+`cross_err = 0` already implies `det > 0`, so reverting the determinant
+criterion *alone* leaves the suite green — no test pins it by itself. What case
+5 pins is the **pair**: remove both, which is exactly the old `|det|` test, and
+case 5 goes red. Defence in depth, not two independent tests. Measurements in
+exp 14 §2.1.
+
+### Fail loud, fail safe
+
+Three independent gates, all of which degrade to *exactly the previous
+position-only behaviour* rather than to a plausible-looking wrong one:
+
+| gate | when | what happens |
+|---|---|---|
+| `ht_selfcheck()` at DLL load | the maths is broken in this build | orientation never written; one line in CAPITALS naming the failing case |
+| per-view basis + invariant check | a composed basis is not right-handed orthonormal, or the invariant breaks | that view keeps the **game's** orientation; the numbers (lengths, dots, det, mirrored flag, invariant error) are logged; 30 consecutive failures disable orientation for the session |
+| eye-offset sanity | separation is not a human IPD, or the left eye is not on the left | the runtime's offsets are refused, the assumed IPD shift is used, and the log says which of the two it was |
+
+The eye-offset check doubles as the **units** experiment: it prints the
+headset's measured IPD both in game units and in millimetres, so
+camera-hook-plan §5.4's assumed inches becomes a number in the log the first
+time this code sees a real headset.
+
+### Two instruments that had started to lie
+
+Both were found by reading, not by running, and both are the failure mode this
+file keeps warning about — an instrument that prints something reassuring.
+
+1. **`|viewParms.origin - refdef.vieworg|`** (§1's load-bearing check) compared
+   the engine's output against the refdef *after the restore*. That was right
+   while the hook only observed; the moment it started shifting the camera the
+   check began printing `MISMATCH: something in the chain is wrong` on a
+   perfectly healthy frame. It now compares against a snapshot of what was
+   actually handed to the engine, and the restore is reported separately.
+2. The first-frame log printed `game fwd` from a pointer that aliases
+   `refdef+0x34` — *after* the composed basis had been memcpy'd over it. It
+   would have shown the game and the head agreeing exactly, always. The log now
+   happens before the write, and the code says why the order matters.
+
+A third check is new: `max|viewParms.axis - what we sent|`. Without it, "the
+engine used our basis" and "the engine rebuilt the basis from the player's
+angles and ignored ours" produce identical evidence — a `viewParms` axis that is
+orthonormal and plausible.
+
+### Where the pose comes from, and the compromise in it
+
+`gameframe.asi` owns the OpenVR session and the frame clock but exports no pose,
+so `camera.asi` takes exp 12's second documented route: `poses_attach()`, which
+asks the already-loaded `openvr_api.dll` for `IVRSystem_023` and **never calls
+`VR_InitInternal2`**, so it cannot steal or duplicate the compositor session.
+Poses come from `poses_poll()`, which does not touch the compositor's frame
+pacing. `make verify` fails the build if a `WaitGetPoses` reference or an
+OpenVR import ever reaches `camera.asi`.
+
+The compromise: that is the *polled* pose, not the render pose `WaitGetPoses`
+hands the compositor, so the two can differ by a fraction of a frame and
+reprojection will be slightly inconsistent with what was drawn. The fix is one
+line in `gameframe.c` (`poses_update(rposes, 64)`, exp 12 §5 Test 3) plus a pose
+export — that file belongs to another workstream and was not touched.
+
+Sampling happens **once per frame**, in the `R_RenderScene` hook, and both eyes
+are built from that one sample. Sampling per view would give the two eyes poses
+from different instants — a vertical-disparity headache rather than a visible
+glitch.
+
+### The isolation configuration, which used to be the one that could not work
+
+The sample call originally sat *below* the `bo1vr_capture_eye` resolution block,
+whose failure path returns early. With `gameframe.asi` absent, that early return
+meant `poses_attach()` was never reached and head tracking was silently and
+permanently dead — in exactly the configuration §5 documents as this
+experiment's isolation test ("tested with `gameframe.asi` moved aside, so the
+only variable was this hook"). The one arrangement in which someone would go
+looking for a head-tracking fault was the one arrangement in which head tracking
+could not run, and it would have looked like a broken pose pipeline. Found in
+review.
+
+The sample is now the first thing the hook does, and that path renders **mono
+from the head** (`CAM_EYE_CENTRE`: head orientation, no eye offset) instead of
+leaving the camera alone, so head tracking can be watched on a flat monitor with
+no `gameframe.asi` at all. The log says `NO STEREO ... but head orientation
+still applies` rather than the old silent single line.
+
+### Controls, and why exports alone were not controls
+
+```c
+bo1vr_camera_set_head_tracking(int on);      /* default on                    */
+bo1vr_camera_set_ref_mode(int mode);         /* 0 = yaw-only (default), 1 = full */
+bo1vr_camera_recentre(void);                 /* "straight ahead" is now here  */
+bo1vr_camera_set_position_tracking(int on);  /* room-scale lean, default OFF  */
+bo1vr_camera_set_units_per_metre(float u);   /* world scale                   */
+```
+
+These five shipped as the *only* interface, and review pointed out that made
+them **dead code**: nothing in the process resolves them — `gameframe.asi` looks
+up `bo1vr_camera_set_eye` and nothing else. So `HT_REF_FULL` could not be
+selected (the comparison this section calls for could not be performed), head
+tracking could not be switched off without deleting `camera.asi` and losing
+stereo with it, and recentring could not be triggered at all — which mattered
+more than it sounds, because `g_yaw0` was a one-shot: a garbage first pose right
+after `poses_attach()` would have fixed a wrong "straight ahead" for the entire
+session with no way to correct it.
+
+Two paths now exist that need no rebuild and no cooperation from any other
+component:
+
+| switch file in `C:\bo1vr` | key | effect |
+|---|---|---|
+| `nohead.on` | RCtrl+F10 | orientation off — back to the position-only camera |
+| `reffull.on` | RCtrl+F11 | `HT_REF_FULL` instead of yaw-only — **the comparison** |
+| `roomscale.on` | RCtrl+F12 | positional head tracking on |
+| `recentre.on` (consumed) | RCtrl+F9 | recentre now |
+
+The files follow `gameframe.c`'s existing bisect-switch pattern and are re-read
+every 90 frames, so they work while the game is running; `recentre.on` is
+deleted when it fires, so it behaves like a button. Only `GetAsyncKeyState`'s
+`0x8000` "is down now" bit is read, never the `0x0001` "pressed since last call"
+bit — that low bit is process-wide state and reading it would consume the event
+out from under the game's own input. Every change logs the resulting state.
+
+The automatic first recentre now also **waits for 30 consecutive poses the
+runtime reports as `Running_OK`** before capturing `g_yaw0`, and says in the log
+what it is waiting for. A human-requested recentre does not wait.
+
+One new runtime dependency, visible in `make verify`: `USER32.dll`, for
+`GetAsyncKeyState`. It is a system DLL that every Win32 GUI process — including
+BlackOps.exe — already has mapped, so nothing new is shipped; the `verify`
+target's rule is that *libgcc* must not appear, and it still does not.
+
+Room-scale translation is off by default and that is not timidity:
+`cod_origin` is measured from the *tracking origin*, so a standing player's head
+is ~65 units up, while the game's `vieworg` is already at their eye. With it on,
+only the **delta since the recentre** is added — lean and crouch, nothing else.
+
+### Tracking dropout
+
+A dropped pose holds the last one for 90 frames and then releases the view back
+to the game's orientation, with a log line. Releasing immediately would *snap*
+the world by however far the head was turned; holding forever leaves the view
+stuck at an angle nobody can correct once the headset is off.
+
+### The yaw-only default is a GUESS, and it is the open design question
+
+Yaw-only keeps the horizon level, which is why it is the default. It also has
+consequences nobody here has lived with:
+
+* **It decouples aim from view.** The refdef axis is restored after the call, so
+  the player's weapon still points where the *mouse* points, not where they are
+  looking. In a headset that is either fine (you aim with the mouse, you look
+  with your head) or deeply wrong, and no amount of reading settles it.
+* **It discards scripted pitch and roll.** Black Ops moves the camera itself in
+  death cams, vehicle sections and the intro. Those are pitch and roll, and
+  yaw-only throws them away — the player would keep a level horizon through a
+  sequence built on tilting it.
+
+`HT_REF_FULL` keeps all of it and pays with a horizon that rolls when you turn
+your head under mouse pitch. **Which is worse can only be decided in a headset**,
+which is precisely why the runtime toggle above exists. Neither default is
+validated. Do not read the yaw-only default as a conclusion.
+
+### NOT verified — everything about behaviour
+
+The game was not run, by instruction, in either round. So: that `poses_attach()`
+succeeds inside BlackOps.exe; that xrizer/Monado report a usable HMD pose at all
+(exp 12's Test 1, still unrun, is the gate on this whole path); that the
+composed view looks right, is not mirrored, does not swim, and does not fight
+the mouse; that 90 frames is a sensible dropout hold; that 30 `Running_OK` poses
+is long enough for a runtime to settle; that discarding the game's pitch is the
+right call; and — new in this round — that `RCtrl+F9..F12` are actually free in
+Black Ops, that `GetAsyncKeyState` sees keys at all under Proton with the game
+holding raw input, and that `CAM_EYE_CENTRE` renders a sane mono view. The maths
+is executed and mutation-tested. **The behaviour is not tested at all**, and the
+controls added to make it testable are themselves untested.
