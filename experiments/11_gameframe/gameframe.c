@@ -151,8 +151,10 @@ static LONG  g_gate_max_spins;
 
 /* Bisect switches, declared here because interop_init (above the definitions)
  * now consults them too. */
-static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq;
+static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
 static void read_opts(void);
+static int  opt(const char *name);
+static IDirect3DSurface9 *g_probe_rt;   /* probe.on / probe2.on target */
 
 static void (*g_set_eye)(int);      /* camera.asi's bo1vr_camera_set_eye */
 static int  g_state;          /* 0 = not tried, 1 = live, -1 = failed, do not retry */
@@ -544,6 +546,126 @@ static int aut_symbolise(DWORD addr, char *out, size_t outsz)
     return 1;
 }
 
+
+/* THE GAME'S FENCE, READ AT THE MOMENT IT IS STUCK.
+ *
+ * 0x6ebb40 spins on ring[(index + size - 1) % size]->GetData(D3DGETDATA_FLUSH).
+ * Those three globals are all we need to see the fence from outside: how big
+ * the ring is, where the game is in it, and which query object it is waiting
+ * on. Pure reads -- no D3D9 calls from this thread, because the render thread
+ * is inside GetData on that very object and D3D9 objects are not safe to touch
+ * concurrently unless the device was created MULTITHREADED.
+ *
+ * A vtable pointer landing inside d3d9.dll is the check that these addresses
+ * still mean what the disassembly said they mean; a plausible-looking number
+ * read from the wrong place is the failure mode this project keeps hitting. */
+#define GAME_RING_BASE  0x3966134
+#define GAME_RING_SIZE  0x39660b4
+#define GAME_RING_INDEX 0x396a4cc
+
+/* Like aut_symbolise but for DATA addresses (a vtable is in .rdata, which is
+ * not executable -- the code filter rejected it and printed "unresolved"). */
+static int sym_data(DWORD addr, char *out, size_t outsz)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    char path[MAX_PATH], *base;
+    if (!addr || !VirtualQuery((LPCVOID)(uintptr_t)addr, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT || !mbi.AllocationBase) return 0;
+    if (!GetModuleFileNameA((HMODULE)mbi.AllocationBase, path, sizeof(path))) return 0;
+    base = strrchr(path, '\\'); base = base ? base + 1 : path;
+    _snprintf(out, outsz, "%s+0x%lx", base,
+              (unsigned long)(addr - (DWORD)(uintptr_t)mbi.AllocationBase));
+    out[outsz - 1] = '\0';
+    return 1;
+}
+
+static int addr_ok(const void *p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    return (SIZE_T)((uintptr_t)mbi.BaseAddress + mbi.RegionSize - (uintptr_t)p) >= n;
+}
+
+static void dump_game_fence(void)
+{
+    DWORD size, index, waited;
+    DWORD *ring;
+    char sym[160];
+    unsigned i;
+
+    if (!addr_ok((void *)GAME_RING_SIZE, 4) || !addr_ok((void *)GAME_RING_INDEX, 4)) {
+        glog("FENCE: ring globals not mapped -- addresses stale?");
+        return;
+    }
+    size  = *(volatile DWORD *)GAME_RING_SIZE;
+    index = *(volatile DWORD *)GAME_RING_INDEX;
+    if (!size || size > 64) { glog("FENCE: implausible ring size %lu", (unsigned long)size); return; }
+
+    waited = (index + size - 1) % size;
+    glog("FENCE: ring size=%lu index=%lu -> game is polling slot %lu",
+         (unsigned long)size, (unsigned long)index, (unsigned long)waited);
+
+    ring = (DWORD *)GAME_RING_BASE;
+    if (!addr_ok(ring, size * 4)) { glog("FENCE: ring array not mapped"); return; }
+    for (i = 0; i < size; i++) {
+        DWORD q = ring[i];
+        if (!q || !addr_ok((void *)q, 4)) {
+            glog("FENCE:   slot %u = %08lx%s", i, (unsigned long)q,
+                 i == waited ? "   <== POLLED" : "");
+            continue;
+        }
+        /* first dword of a COM object is its vtable */
+        if (sym_data(*(DWORD *)q, sym, sizeof(sym)))
+            glog("FENCE:   slot %u = %08lx vtbl->%s%s", i, (unsigned long)q, sym,
+                 i == waited ? "   <== POLLED" : "");
+        else
+            glog("FENCE:   slot %u = %08lx vtbl=%08lx (unresolved)%s", i,
+                 (unsigned long)q, (unsigned long)*(DWORD *)q,
+                 i == waited ? "   <== POLLED" : "");
+    }
+}
+
+/* IS THE WHOLE PIPELINE STALLED, OR ONLY THE GAME'S QUERY?
+ *
+ * The game is spinning on a single D3D9 EVENT query that will not retire. Two
+ * very different worlds produce that: either nothing is completing on the GPU
+ * at all, or that particular query is stuck while the device is otherwise
+ * fine. A fresh query of our own, issued and polled right now, separates them
+ * in one measurement -- and the answer points at completely different fixes.
+ *
+ * Behind a switch, because it calls D3D9 from the watchdog thread while the
+ * render thread sits inside GetData on its own object. The game is already
+ * dead when this runs, so the downside is bounded; running it in normal
+ * operation would not be. */
+static void probe_own_fence(void)
+{
+    IDirect3DQuery9 *q = NULL;
+    HRESULT hr;
+    int i;
+
+    if (!g_dev) { glog("FENCE: no device to probe with"); return; }
+    hr = IDirect3DDevice9_CreateQuery(g_dev, D3DQUERYTYPE_EVENT, &q);
+    if (FAILED(hr) || !q) {
+        glog("FENCE: our CreateQuery failed hr=0x%08lx -- the device itself is gone",
+             (unsigned long)hr);
+        return;
+    }
+    IDirect3DQuery9_Issue(q, D3DISSUE_END);
+    for (i = 0; i < 3000; i++) {
+        hr = IDirect3DQuery9_GetData(q, NULL, 0, D3DGETDATA_FLUSH);
+        if (hr != S_FALSE) break;
+        Sleep(1);
+    }
+    if (hr == S_OK)
+        glog("FENCE: OUR fresh query RETIRED after %d ms -- the GPU and the "
+             "submission path are alive; only the game's query is stuck", i);
+    else
+        glog("FENCE: OUR fresh query did NOT retire in %d ms (hr=0x%08lx) -- "
+             "nothing is completing; the stall is below D3D9", i, (unsigned long)hr);
+    IDirect3DQuery9_Release(q);
+}
+
 static void freeze_autopsy(void)
 {
     static struct aut_thread t[AUT_MAXT];
@@ -640,6 +762,8 @@ static void freeze_autopsy(void)
             }
         }
     }
+    dump_game_fence();
+    if (opt("fenceprobe.on")) probe_own_fence();
     glog("AUTOPSY: end");
 }
 
@@ -798,6 +922,41 @@ __declspec(dllexport) void bo1vr_capture_eye(int eye)
     IDirect3DSurface9 *rt = NULL;
     HRESULT hr;
 
+    read_opts();
+
+    /* probe2.on: the SAME single StretchRect as probe.on, moved to here --
+     * mid-scene, from the camera hook, with GetRenderTarget(0) as the source
+     * instead of the back buffer. probe.on survived; if this one freezes, the
+     * trigger is resolving the CURRENTLY BOUND render target in the middle of
+     * the game's own scene render, not the existence of extra work. */
+    if (g_probe2) {
+        static LONG n2; static int logged2;
+        IDirect3DSurface9 *cur = NULL;
+        HRESULT hr2;
+        if (!g_probe_rt || !g_dev) {
+            if (!logged2) { logged2 = 1;
+                glog("probe2: NOT RUNNING (rt=%p dev=%p) -- a silent no-op would "
+                     "look exactly like a pass", (void *)g_probe_rt, (void *)g_dev); }
+            return;
+        }
+        if (SUCCEEDED(IDirect3DDevice9_GetRenderTarget(g_dev, 0, &cur)) && cur) {
+            D3DSURFACE_DESC d;
+            hr2 = IDirect3DDevice9_StretchRect(g_dev, cur, NULL, g_probe_rt, NULL, D3DTEXF_NONE);
+            if (!logged2) {
+                logged2 = 1;
+                if (SUCCEEDED(IDirect3DSurface9_GetDesc(cur, &d)))
+                    glog("probe2 LIVE: mid-scene StretchRect from bound RT %ux%u ms=%d "
+                         "-> probe target, hr=0x%08lx", d.Width, d.Height,
+                         (int)d.MultiSampleType, (unsigned long)hr2);
+            }
+            IDirect3DSurface9_Release(cur);
+            InterlockedIncrement(&n2);
+        } else if (!logged2) {
+            logged2 = 1; glog("probe2: GetRenderTarget failed -- nothing issued");
+        }
+        return;
+    }
+
     if (g_state != 1 || !g_dev || eye < 0 || eye > 1)
         return;                               /* not up yet -- first frames */
     if (!g_vkdev) return;                     /* novk.on: no interop, no capture */
@@ -904,8 +1063,10 @@ static void read_opts(void)
     g_notex    = opt("notex.on");
     g_noviq    = opt("noviq.on");
     g_noq      = opt("noq.on");
-    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d",
-         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq);
+    g_probe    = opt("probe.on");
+    g_probe2   = opt("probe2.on");
+    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d",
+         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2);
 }
 
 static void submit_eye(int i)
@@ -1242,9 +1403,75 @@ static pfn_createdev  real_createdev;
 static pfn_sc_present real_sc_present;
 static pfn_reset      real_reset;
 
+
+/* THE PROBE: is it OUR work, or ANY extra work?
+ *
+ * Every trial so far has run with the VR pipeline at least partly alive. This
+ * one runs with novr.on -- no OpenVR, no interop, no eye targets, nothing --
+ * and adds exactly one thing: a single D3DPOOL_DEFAULT render target, and one
+ * StretchRect resolve of the back buffer into it per Present.
+ *
+ * That is the smallest possible piece of extra GPU work on the game's device,
+ * issued from the safest possible place (Present, between frames, not mid-scene
+ * from the camera hook). If the game still deadlocks on its own event query,
+ * then the trigger is not our capture, our interop or our submission -- it is
+ * that ANY additional command breaks the game's fence accounting, and the fix
+ * has to be about flush/submission, not about which operation we choose.
+ *
+ * If it survives, the trigger is specific to what we do or where we do it, and
+ * that is a much easier problem. */
+static int g_probe_state;
+
+static void probe_frame(IDirect3DSwapChain9 *sc)
+{
+    IDirect3DSurface9 *bb = NULL;
+    HRESULT hr;
+
+    if (g_probe_state < 0 || !g_dev) return;
+
+    if (g_probe_state == 0) {
+        D3DSURFACE_DESC d;
+        g_probe_state = -1;
+        if (FAILED(IDirect3DSwapChain9_GetBackBuffer(sc, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb)
+            return;
+        hr = IDirect3DSurface9_GetDesc(bb, &d);
+        IDirect3DSurface9_Release(bb);
+        if (FAILED(hr)) return;
+        hr = IDirect3DDevice9_CreateRenderTarget(g_dev, d.Width, d.Height, d.Format,
+                                                 D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                 &g_probe_rt, NULL);
+        if (FAILED(hr) || !g_probe_rt) {
+            glog("probe: CreateRenderTarget hr=0x%08lx", (unsigned long)hr);
+            return;
+        }
+        glog("probe.on: one %ux%u RT, one StretchRect per Present, NO VR at all",
+             d.Width, d.Height);
+        g_probe_state = 1;
+        return;
+    }
+
+    if (g_probe2) {          /* the work moves to the camera hook; count frames here */
+        g_watch_frame = InterlockedIncrement(&g_frames);
+        return;
+    }
+
+    if (FAILED(IDirect3DSwapChain9_GetBackBuffer(sc, 0, D3DBACKBUFFER_TYPE_MONO, &bb)) || !bb)
+        return;
+    hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_probe_rt, NULL, D3DTEXF_NONE);
+    IDirect3DSurface9_Release(bb);
+    if (FAILED(hr) && g_frames < 3)
+        glog("probe: StretchRect hr=0x%08lx", (unsigned long)hr);
+
+    /* The watchdog needs to see frames advancing, and do_frame will not run. */
+    g_watch_frame = InterlockedIncrement(&g_frames);
+}
+
 static HRESULT WINAPI my_sc_present(IDirect3DSwapChain9 *sc, const RECT *a, const RECT *b,
                                     HWND w, const RGNDATA *d, DWORD f)
 {
+    start_watchdog();
+    read_opts();
+    if (g_probe) probe_frame(sc);
     do_frame(sc);
     /* Call the real Present LAST: the game's own picture still goes to the
      * monitor exactly as before. Nothing above changes the render target, the
@@ -1306,14 +1533,46 @@ static HRESULT WINAPI my_createdevice(IDirect3D9 *self, UINT adapter, D3DDEVTYPE
                                       HWND focus, DWORD flags,
                                       D3DPRESENT_PARAMETERS *pp, IDirect3DDevice9 **out)
 {
+    /* THE CANDIDATE FIX.
+     *
+     * The game asks for a SINGLE-THREADED device (flags=0x40, HWVP only). D3D9
+     * then permits the runtime to omit internal locking, and DXVK takes that
+     * permission. Every D3D9 call we add -- the capture StretchRects, the
+     * interop transitions, the gate's GetData -- is extra traffic on a device
+     * whose owner promised there would be none beyond its own.
+     *
+     * That fits the evidence in a way no other hypothesis has: the trigger is
+     * touching extra resources rather than any particular operation; it is
+     * stochastic (probe2 froze once in two runs); DXVK's worker threads are all
+     * IDLE at the freeze rather than blocked, which is what a lost wakeup looks
+     * like rather than a deadlock; and Monado, in another process, is
+     * unaffected throughout.
+     *
+     * mt.on ORs in D3DCREATE_MULTITHREADED, which is the documented way to say
+     * "this device will be used from more than one place". It costs some
+     * locking overhead and nothing else. */
+    if (opt("mt.on")) {
+        flags |= D3DCREATE_MULTITHREADED;
+        glog("mt.on: forcing D3DCREATE_MULTITHREADED (game asked for 0x%08lx)",
+             (unsigned long)(flags & ~(DWORD)D3DCREATE_MULTITHREADED));
+    }
+    {
     HRESULT hr = real_createdev(self, adapter, type, focus, flags, pp, out);
     if (SUCCEEDED(hr) && out && *out) {
-        glog("CreateDevice adapter=%u %ux%u windowed=%d", adapter,
+        /* BehaviorFlags decides whether calling D3D9 from any thread but the
+         * creating one is legal. The freeze probe issues a query from the
+         * watchdog thread, and that measurement is only trustworthy if
+         * D3DCREATE_MULTITHREADED is set -- otherwise its answer is undefined
+         * behaviour dressed up as evidence. */
+        glog("CreateDevice adapter=%u %ux%u windowed=%d flags=0x%08lx%s%s", adapter,
              pp ? pp->BackBufferWidth : 0, pp ? pp->BackBufferHeight : 0,
-             pp ? (int)pp->Windowed : -1);
+             pp ? (int)pp->Windowed : -1, (unsigned long)flags,
+             (flags & D3DCREATE_MULTITHREADED) ? " MULTITHREADED" : " single-threaded",
+             (flags & D3DCREATE_HARDWARE_VERTEXPROCESSING) ? " HWVP" : "");
         hook_device(*out);
     }
     return hr;
+    }
 }
 
 static IDirect3D9 *WINAPI my_create9(UINT sdk)

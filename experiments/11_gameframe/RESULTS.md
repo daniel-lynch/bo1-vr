@@ -545,3 +545,77 @@ found on the DXVK side, not by more bisecting here.
 
 Addresses for the record: query ring base `0x3966134`, ring size `0x39660b4`,
 index `0x396a4cc`, poll loop `0x6ebb40`, `Sys_Sleep` `0x4aae60`.
+
+## 11. Deeper: it is not a VR bug at all
+
+### The freeze reproduces with zero VR involvement
+
+Two probes, both with `novr.on` -- no OpenVR, no interop, no eye textures, no
+Submit -- adding exactly one thing: a single extra `D3DPOOL_DEFAULT` render
+target and one `StretchRect` into it.
+
+| probe | where the StretchRect runs | source | result |
+|---|---|---|---|
+| `probe.on` | at Present, between frames | swap-chain back buffer | survived 150 s |
+| `probe2.on` | mid-scene, from the camera hook | `GetRenderTarget(0)` (the BOUND target) | **froze** (1 of 2 informative runs) |
+
+So it is not "any extra GPU work" -- the Present-time resolve is harmless. And
+the mid-scene one reproduces the deadlock **with no VR code running at all**,
+which takes OpenVR, xrizer, Monado, Vulkan interop and the compositor out of
+the picture entirely. The minimal reproducer is BO1 + DXVK + one mid-scene
+`StretchRect` from the bound MSAA render target.
+
+It is also **stochastic**: probe2 froze once and survived once, with positive
+proof it fired in both. The full VR configuration, which does far more work per
+frame, has frozen on every run -- 25-42 s, 250-350 frames.
+
+**A trap worth recording:** probe2's FIRST run "survived", and it was a silent
+no-op -- `g_probe_rt` is created at the first Present, and nothing logged
+whether the StretchRect had ever been issued. The same class of error as the
+slot watch and the crop line, for the third time in this project. The rerun
+carries `probe2 LIVE: ... hr=0x00000000`, and only runs that print it count.
+
+### What the game's fence looks like at the moment it hangs
+
+```
+FENCE: ring size=1 index=264 -> game is polling slot 0
+FENCE:   slot 0 = 0d51f238 vtbl->d3d9.dll+0x624d40   <== POLLED
+```
+
+The "ring" is a **single** query, and `index` tracks the frame counter exactly
+(264 against 263 frames). One event query, issued each frame and waited on the
+next: a one-frame GPU-latency limiter. The vtable resolving into `d3d9.dll`
+confirms the three addresses from §10 still mean what the disassembly said.
+
+### What is NOT the cause
+
+* **A device Reset.** None occurs -- the log has no Reset line at all.
+* **A GPU or driver hang.** Monado is compositing on the same GPU throughout,
+  in another process, at 60 Hz.
+* **DXVK being blocked.** At the freeze every DXVK worker -- `dxvk-cs`,
+  `dxvk-submit`, `dxvk-descriptor`, the shader threads -- is in `futex_wait`
+  with nothing queued, `dxvk-queue` in `poll`, `dxvk-frame` in `nanosleep`.
+  Nothing is stuck; nothing is pending. That is the shape of a lost wakeup or a
+  dropped command, not a deadlock.
+* **The single-threaded device, at least as missing locks.** The game asks for
+  `flags=0x00000040` -- `HARDWARE_VERTEXPROCESSING` only, **not**
+  `D3DCREATE_MULTITHREADED` -- which does permit the runtime to skip internal
+  locking, and every D3D9 call we add is traffic its owner promised would not
+  exist. `mt.on` ORs `D3DCREATE_MULTITHREADED` into `CreateDevice`. **It froze
+  anyway**, at 28 s. Good hypothesis, cleanly refuted.
+
+### A retraction
+
+§11's earlier probe issued a fresh query from the watchdog thread and reported
+that it never retired, concluding "the stall is below D3D9". That device is
+single-threaded, so calling D3D9 from a second thread is undefined behaviour;
+the measurement is not evidence and the conclusion does not stand.
+
+### Where this leaves the fix
+
+Present-time capture survived and mid-scene capture did not, so the practical
+route is to stop resolving the bound render target mid-scene: capture at
+Present from the back buffer -- which is exactly what `probe.on` does safely --
+and obtain stereo by alternating eyes across frames rather than by capturing
+twice within one. That trades the dual-view latency win for a configuration
+with direct evidence of stability behind it, and it is testable unattended.
