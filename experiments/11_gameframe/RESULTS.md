@@ -1262,3 +1262,47 @@ playtest away from being in the way.
 **Still open:** the pause menu renders the frozen scene behind it, so the token
 is set and the reticle will draw there. Whether that is wrong is a judgement
 call best made wearing the headset.
+
+### 19.2 The reticle needs the game's spread, not a fixed size
+
+Playtest: "we'll want to grab the spread data from the game as well, ours is a
+static one and has a much smaller spread than the game's."
+
+Correct, and it matters more than cosmetics: a fixed-size reticle over a weapon
+whose cone is much wider claims a precision the gun does not have. Since
+`xhair3d.on` now hides the game's own dynamic crosshair, our reticle is the only
+thing the player has to judge spread by, so it has to be honest about it.
+
+**Found: `aimSpreadScale` lives at offset `0x52C` in `playerState_t`.** Taken
+from the network field table at `0xA5C6B0`, whose rows are
+`{const char *name; int offset; int bits}` at a **60-byte stride** — established
+by walking outward and checking which candidate rows decode to real field names,
+not assumed:
+
+| row | field | offset | bits |
+|---|---|---|---|
+| -5 | `legsAnim` | `0x0BC` | 2 |
+| 0 | `aimSpreadScale` | `0x52C` | 4 |
+| +5 | `weapAnim` | `0x524` | 4 |
+
+Coherent neighbours, plausible offsets for a structure of that size. The 4-bit
+network quantisation is the wire encoding, not the local precision — the local
+predicted playerState holds the real float.
+
+**Still needed: the local `playerState_t` base pointer.** The field offset is
+useless without it, and it has not been located. Two routes:
+
+1. **Find the base.** `cg.predictedPlayerState` in this engine's ancestry. The
+   per-client structure at `0xBA68xx` (stride `0xEB0`) that §8's angle work
+   turned up is the natural place to start looking.
+2. **Hook the game's crosshair draw instead**, read the spread it has already
+   computed, then suppress the original and draw ours at that size. This gets
+   the engine's exact answer including every perk, stance and movement modifier,
+   rather than reimplementing the spread curve from a raw scale value — and
+   those modifiers (`hipSpread*`, `perk_weapSpreadMultiplier`,
+   `bg_aimSpreadMoveSpeedThreshold`) are numerous enough that reimplementing
+   them would drift from the game's real cone.
+
+Route 2 is preferable on those grounds, and it also subsumes `xhair3d.on`:
+suppressing at the draw is more precise than suppressing via the dvar. It costs
+finding one function.
