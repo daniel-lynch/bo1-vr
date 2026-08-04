@@ -99,3 +99,62 @@ aside. Steps 1-3 are a playtest and a modest amount of code.
 Full motion controls in the sense the Vice City VR release notes use the phrase —
 tracked hands, two-handed grips, physical scopes, holsters, manual reload — is a
 much longer road, and step 4 (input) has not even been surveyed yet.
+
+---
+
+## 5. Update: the controller poses are confirmed live
+
+First hardware observation of the exp 12 hand slots, from a real play session:
+
+```
+controller left:  pos 1.9 -9.4 20.4  fwd -0.974 -0.061 0.220  tracking_result=200 connected=1
+controller right: pos 0.1 -8.6 19.9  fwd  0.229 -0.972 0.046  tracking_result=200 connected=1
+controller left: NO valid pose (off, asleep, or not tracked)
+```
+
+Positions move with the hands, forward vectors are unit length and plausible,
+`tracking_result` is 200 (`Running_OK`), and the left controller dropping out
+when it was set down is exactly the case the change-detection was written for.
+
+**Step 1 of §3 is done.** Exp 12's coordinate section stops being ASSUMED.
+
+## 6. Why this is now the priority, not a nice-to-have
+
+Playtest feedback after positional head tracking went in:
+
+> "Updated headtracking does feel good but now makes accuracy hard because your
+> head is moving in world space but the gun is in a fixed place"
+
+That is not a bug in head tracking — it is the direct consequence of doing head
+tracking properly while aim is still bolted to the flat-screen input path. The
+view now translates and rotates in world space; the weapon still fires from the
+player's fixed position along the game's own angles; and the crosshair is drawn
+at screen centre, which is now wherever the head is looking rather than where
+the gun points. Three frames of reference, two of them lying.
+
+There are only two honest fixes, and they are §3's remaining steps:
+
+1. **A crosshair that tells the truth** — shows where the WEAPON points, not
+   where the head does (#41). `xhair3d.on` is now enabled to test the cheap
+   version of this.
+2. **Aim the gun with the hand** (#45), so the two frames agree by construction.
+
+## 7. The aim dry run
+
+The transform from a controller's tracking-space forward vector to the two
+accumulators is not known. The recentre yaw applies to the hand as it does to
+the head, and the reference basis was captured from the game's own view
+direction, so there is a frame relationship to establish — and getting the sign
+wrong spins the player uncontrollably, which is a ruined session that teaches
+almost nothing.
+
+So `aimlog.on` logs both sides of the equation and **writes nothing**:
+
+```
+aimlog: game pitch P yaw Y | hand raw pitch p yaw y | hand recentred yaw y' (yaw0 Y0) | head yaw h
+```
+
+Fit the transform from that, then write it behind its own switch. The addresses
+are BSS values read out of a disassembly, so they are `VirtualQuery`-checked
+before every read: a wrong address that silently returned plausible-looking
+garbage would be far more expensive than one that faults.

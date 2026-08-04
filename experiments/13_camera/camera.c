@@ -50,6 +50,12 @@
 #define VA_R_SetViewParms 0x6C7F80u
 #define VA_R_RenderScene  0x6C8C40u
 #define VA_R_RenderSceneInternal 0x6C8CD0u
+
+/* The client's accumulated view angles -- docs/motion-controls-plan.md.
+ * FUN_00881930 (mouse look) adds the scaled mouse deltas straight into these,
+ * so they ARE where the weapon points. Read-only so far; see the aim dry run. */
+#define VA_CL_PITCH       0x2911E20u
+#define VA_CL_YAW         0x2911E24u
 /* frontEndData pointer, and the bump-allocated view-parms counter inside it.
  * camera-hook-plan 5.1 names slot exhaustion the HIGHEST risk of rendering the
  * scene twice, and gives exactly this as the test. */
@@ -471,6 +477,18 @@ static void switch_consume(const char *name)
  * in the CRT's locale machinery, and atof() is locale-sensitive -- on a comma
  * -decimal locale "1.5" parses as 1. A knob that silently means something
  * different on someone else's machine is worse than no knob. */
+/* Is this address actually committed and readable? The aim accumulators are
+ * BSS addresses read out of a disassembly, and a wrong one would either fault
+ * or -- worse -- silently read garbage that looks like plausible angles. */
+static int mem_readable_cam(const void *p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof mbi)) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return 0;
+    return (SIZE_T)((const char *)mbi.BaseAddress + mbi.RegionSize - (const char *)p) >= n;
+}
+
 static int switch_float(const char *name, float *out)
 {
     char path[MAX_PATH], buf[64];
@@ -780,6 +798,47 @@ static void headtrack_sample(void)
     g_head_valid = poses_get(POSES_HMD, &hmd);
     if (g_head_valid)
         memcpy(g_head_pos, hmd.cod_origin, sizeof g_head_pos);
+
+    /* AIM DRY RUN -- MEASUREMENT ONLY, NEVER A WRITE.
+     *
+     * docs/motion-controls-plan.md locates the aim accumulators: the mouse-look
+     * function FUN_00881930 adds mouse deltas straight into 0x2911E20 (pitch)
+     * and 0x2911E24 (yaw), so writing those two floats is how the weapon gets
+     * aimed. The transform from a controller's tracking-space forward vector to
+     * those two numbers is NOT known, though -- the recentre yaw applies to the
+     * hand exactly as it does to the head, and the reference basis was captured
+     * from the game's own view direction, so there is a frame relationship to
+     * establish and getting it wrong spins the player uncontrollably.
+     *
+     * Guessing it and playtesting the guess is the expensive way round: a wrong
+     * sign is a ruined session and tells you almost nothing. Logging both sides
+     * of the equation for one session costs nothing and fits the transform from
+     * data. So this reads the game's live angles and the hand's angles side by
+     * side and writes NOTHING. aimlog.on, off by default.
+     *
+     * When the relationship is clear, #45 writes it -- behind its own switch. */
+    if (switch_on("aimlog.on") && g_base) {
+        static long an;
+        if ((an++ % 90) == 0) {
+            const float *gp = (const float *)(g_base + (VA_CL_PITCH - PREFERRED_BASE));
+            const float *gy = (const float *)(g_base + (VA_CL_YAW   - PREFERRED_BASE));
+            poses_pose_t rh;
+            if (poses_get(POSES_HAND_RIGHT, &rh) && mem_readable_cam(gp, 4) &&
+                mem_readable_cam(gy, 4)) {
+                const float *f = rh.cod_axis[0];          /* forward row */
+                float hyaw = ht_yaw_of((const float *)rh.cod_axis) * 57.29578f;
+                /* CoD pitch is NEGATIVE up. Same clamp idiom as g_last_game_pitch
+                 * below -- asinf of a component that rounds to 1.0000001 is NaN,
+                 * and a NaN here would poison the log rather than the game. */
+                float hpit = -asinf(f[2] > 1.0f ? 1.0f : (f[2] < -1.0f ? -1.0f : f[2]))
+                             * 57.29578f;
+                camlog("aimlog: game pitch %.2f yaw %.2f | hand raw pitch %.2f yaw %.2f | "
+                       "hand recentred yaw %.2f (yaw0 %.2f) | head yaw %.2f",
+                       *gp, *gy, hpit, hyaw,
+                       hyaw - g_yaw0 * 57.29578f, g_yaw0 * 57.29578f, g_last_head_yaw);
+            }
+        }
+    }
 
     /* CONTROLLERS: OBSERVED, NOT YET USED.
      *
