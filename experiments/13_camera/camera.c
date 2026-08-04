@@ -989,9 +989,19 @@ void __cdecl hk_body(void *out, void *in)
          * display is what "super zoomed in" is. Setting the refdef tangents
          * lets the engine build its own projection from them, rather than us
          * hand-building a matrix and having to get its handedness right. */
-        if (g_get_fov && eye != CAM_EYE_CENTRE) {
+        /* CENTRE GETS THE FOV TOO. It is exempt from the eye OFFSET above --
+         * a mono view from the head has no parallax to add -- but it is still a
+         * view being shown on a headset, and it was excluded here as well. That
+         * left the one configuration meant for testing head tracking on a flat
+         * monitor, and every nocap.on run, rendering at the game's ~80 degrees
+         * and then being cropped and blown up as if it were 124: the "still
+         * pretty zoomed" of the first playtest. gameframe.asi's two eyes carry
+         * identical tangents (they differ only in the off-centre part, which we
+         * do not use), so eye 0's are the right ones to ask for. */
+        if (g_get_fov) {
             float tx, ty;
-            if (g_get_fov((int)eye, &tx, &ty)) {
+            int fov_eye = (eye == CAM_EYE_CENTRE) ? CAM_EYE_LEFT : (int)eye;
+            if (g_get_fov(fov_eye, &tx, &ty)) {
                 float *fx = (float *)(rd + RD_TANHALFFOVX);
                 float *fy = (float *)(rd + RD_TANHALFFOVY);
                 save_fov[0] = *fx; save_fov[1] = *fy;
@@ -1134,7 +1144,9 @@ void __cdecl hk_body(void *out, void *in)
 typedef void (__cdecl *pfn_renderscene)(void *refdef);
 static pfn_renderscene o_R_RenderScene;
 static void (*g_capture)(int);
+static int  (*g_cap_enabled)(void);   /* gameframe.asi's bo1vr_capture_enabled */
 static int  g_dual_logged;
+static int  g_mono_logged;
 
 static void __cdecl hk_R_RenderScene(void *refdef)
 {
@@ -1189,8 +1201,35 @@ static void __cdecl hk_R_RenderScene(void *refdef)
         }
         g_get_fov = (int (*)(int, float *, float *))
                     GetProcAddress(GetModuleHandleA("gameframe.asi"), "bo1vr_get_eye_fov");
+        g_cap_enabled = (int (*)(void))
+                    GetProcAddress(GetModuleHandleA("gameframe.asi"), "bo1vr_capture_enabled");
         camlog("dual view: capture entry resolved -- two renders per frame%s",
                g_get_fov ? "; HMD FOV available" : "; NO HMD FOV (still game FOV)");
+    }
+
+    /* RENDERING TWICE IS ONLY WORTH IT IF SOMETHING CAPTURES THE FIRST ONE.
+     *
+     * Under nocap.on (and novk/notex/probe2) bo1vr_capture_eye returns without
+     * doing anything, so the second render simply overwrites the first and the
+     * eye textures are filled from the back buffer at Present instead. Two
+     * renders then buy nothing and cost plenty: the back buffer ends up holding
+     * whichever camera drew last, and gameframe.asi -- still seeing no dual
+     * view -- was flipping the eye every frame on top of that. Pulsing.
+     *
+     * One CENTRE render is the honest shape for that configuration: head
+     * orientation and headset FOV, no eye offset, nothing to alternate. Mono,
+     * but coherent. If gameframe.asi is older than this export, assume capture
+     * works and behave exactly as before. */
+    if (g_cap_enabled && !g_cap_enabled()) {
+        if (!g_mono_logged) {
+            g_mono_logged = 1;
+            camlog("MONO: gameframe.asi reports capture disabled -- ONE centre render "
+                   "per frame (head orientation + headset FOV, no eye offset)");
+        }
+        bo1vr_camera_set_eye(CAM_EYE_CENTRE);
+        o_R_RenderScene(refdef);
+        bo1vr_camera_set_eye(CAM_EYE_NONE);
+        return;
     }
 
     bo1vr_camera_set_eye(0);

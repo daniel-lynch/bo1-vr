@@ -1109,6 +1109,34 @@ __declspec(dllexport) int bo1vr_get_eye_fov(int eye, float *tanx, float *tany)
     return 1;
 }
 
+/* DOES THE PER-EYE CAPTURE ACTUALLY DO ANYTHING?
+ *
+ * nocap.on -- and the other cuts that turn bo1vr_capture_eye into an early
+ * return -- make dual view structurally impossible: nothing ever fills the two
+ * eye textures, so g_captured never reaches 2 and g_dual never goes live.
+ *
+ * camera.asi has to know that, because the two modules were each doing
+ * something locally reasonable and globally wrong. camera.asi rendered the
+ * scene twice for two eyes nobody captured; this file, still seeing g_dual == 0,
+ * kept running the alternate-eye fallback and flipping the eye every frame
+ * through bo1vr_camera_set_eye. Two eye-selection schemes then wrote the same
+ * flag, and what reached the compositor was whichever render happened to land
+ * in the back buffer -- sometimes ours at the widened FOV, sometimes the game's
+ * own view at its own FOV, with the eye offset flipping sideways underneath.
+ *
+ * That is exactly the first playtest's report: "pretty zoomed, and pulsing".
+ * The magnification is arithmetic -- the crop keeps the middle 1309 of 2560
+ * columns on the assumption the frame was rendered 1.96x wide, so a frame that
+ * was NOT comes out about 2.2x too big.
+ *
+ * So when capture is off, say so, and both sides collapse to one coherent mono
+ * view instead of pretending to have stereo they cannot have. */
+__declspec(dllexport) int bo1vr_capture_enabled(void)
+{
+    read_opts();
+    return !(g_nocap || g_probe2 || g_novk || g_notex);
+}
+
 /* ------------------------------------------------------------ per-frame */
 
 /* BISECT SWITCHES, read once. The freeze happens with submission on and not
@@ -1721,6 +1749,30 @@ static void do_frame(IDirect3DSwapChain9 *sc)
          * Guessing between those two costs a playtest each. Counting costs
          * nothing. */
         g_flat_frames++;
+    } else if (!bo1vr_capture_enabled()) {
+        /* CAPTURE IS OFF, SO THERE IS NO STEREO TO HAVE -- render mono.
+         *
+         * Alternating eyes here is worse than useless in this configuration.
+         * The eye textures are filled from the back buffer at Present, so both
+         * eyes end up holding the SAME render either way; all the alternation
+         * adds is an eye offset that flips left-right every frame, which the
+         * headset shows as a sideways pulse. One image in both eyes is flat,
+         * but it is stable and correctly scaled, and stable-and-flat beats
+         * pulsing-and-wrong until #32 lets the real capture back on. */
+        static int mono_logged;
+        if (!mono_logged) {
+            mono_logged = 1;
+            glog("MONO: per-eye capture is off (nocap/novk/notex/probe2), so both "
+                 "eyes get the same frame and the eye alternation is disabled");
+        }
+        for (i = 0; i < 2; i++) {
+            hr = resolve_cropped(bb, g_eyes[i][g_buf].surf);
+            if (FAILED(hr)) {
+                if (n < 3) glog("StretchRect mono eye %d hr=0x%08lx", i, (unsigned long)hr);
+                break;
+            }
+        }
+        if (FAILED(hr)) { IDirect3DSurface9_Release(bb); return; }
     } else {
         hr = resolve_cropped(bb, g_eyes[g_cur_eye][g_buf].surf);
         if (0) hr = IDirect3DDevice9_StretchRect(g_dev, bb, NULL, g_eyes[g_cur_eye][g_buf].surf, NULL,
@@ -1852,6 +1904,12 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * too), so a counter there would not alternate per frame. */
     if (g_dual)
         return;                 /* dual view owns the eyes; no alternation */
+
+    /* And when capture is off, camera.asi is rendering one CENTRE view and this
+     * file is putting it in both eyes, so there is no eye to alternate either.
+     * Writing one here would fight camera.asi for the same flag. */
+    if (!bo1vr_capture_enabled())
+        return;
 
     g_cur_eye ^= 1;
     if (!g_set_eye) {

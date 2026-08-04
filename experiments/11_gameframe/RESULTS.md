@@ -984,3 +984,49 @@ write site, one read site, above). The comment in the source now says so.
 The lever stays in the tree, off by default. It is a working, verified
 instrument, and a negative result that cost three runs is worth keeping so it
 is not re-derived.
+
+## 16. First headset playtest: "pretty zoomed, and pulsing" — two symptoms, one cause
+
+The first real playtest under the shipped `nocap.on` config reported no working
+head tracking, a heavily magnified image, and a visible pulse. All three come
+from the same place, and none of them were head tracking being broken.
+
+**The evidence.** `bo1vr_frames.csv` (17568 frames, no freeze) carried
+`dual=0` with the `eye` column flipping `0,1,0,1` every row. `bo1vr_camera.log`
+showed the head basis being composed and applied — `HEAD ORIENTATION LIVE`,
+`*** ORIENTATION APPLIED`, a real offset (`offset returned 1.8198`) — so the
+camera side was working. But of twelve consecutive `R_SetViewParms` calls only
+ONE carried an eye at all, and it carried `eye=1`; the rest were `eye=-1` at the
+game's own `tanHalfFov 0.849 0.478` rather than the widened `1.889 1.151`.
+
+**The cause.** `nocap.on` makes `bo1vr_capture_eye` return at its first check,
+so nothing ever fills the eye textures, `g_captured` never reaches 2, and
+`g_dual` never goes live. Nothing else switched off with it:
+
+* `camera.asi` still rendered the scene twice, for two eyes nobody captured —
+  the second render simply overwrote the first;
+* `gameframe.asi`, still seeing `g_dual == 0`, still ran the alternate-eye
+  fallback and called `bo1vr_camera_set_eye` every frame at Present.
+
+Two eye-selection schemes writing one flag, over a back buffer holding whichever
+camera happened to draw last. The eye offset flipped sideways every frame — the
+**pulse** — and whenever the surviving frame was one of the game's own views,
+the Present-time crop kept the middle 1309 of 2560 columns on the assumption it
+had been rendered 1.96x wide when it had not: a ~2.2x magnification, the
+**zoom**. Head tracking was applied to renders that were then discarded.
+
+**The fix**, both sides made to agree via a new `bo1vr_capture_enabled()` export:
+
+* when capture is off, `camera.asi` renders ONCE with `CAM_EYE_CENTRE` — head
+  orientation, headset FOV, no eye offset;
+* `gameframe.asi` resolves that one frame into BOTH eyes and stops alternating.
+
+Also fixed on the way: `CAM_EYE_CENTRE` was exempt from the FOV override as well
+as the eye offset. The offset exemption is right (mono has no parallax); the FOV
+one was not, and it meant the centre path — the configuration documented for
+testing head tracking on a flat monitor — was permanently zoomed.
+
+Result is mono, which is the honest shape for a configuration that cannot
+capture per-eye. Stereo comes back with #32, not before. **This is a code fix
+verified only by build and by reading the traces; the playtest that confirms it
+has not run yet.**
