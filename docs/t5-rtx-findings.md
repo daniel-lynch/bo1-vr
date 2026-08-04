@@ -60,10 +60,19 @@ That is the difference between the current workaround and a fix, and `nocap.on`
 is exactly what forces our capture to Present, which is what blocks proper
 per-eye capture (#30). So this one lever plausibly unblocks both.
 
-**Not yet tested. It is a hypothesis, not a result.** Unknowns: whether the dvar
-is latched (needing a `vid_restart` or a set before device creation), and what
-it costs in frame rate. `Dvar_FindVar` at `0x5AE810` is verified, so the plugin
-can read and set it without a console.
+**TESTED AND REFUTED — see `experiments/11_gameframe/RESULTS.md` §15.** It does
+the opposite: `nocap.on` + `smpoff.on` froze 2/2 (at 49 s and 41 s) where the
+control froze 0/3. Both override routes demonstrably worked — registration-time
+interception of `Dvar_RegisterBool`, and a per-frame force — so the game really
+did run with SMP disabled, and froze sooner. Kept in the tree behind `smpoff.on`,
+off by default.
+
+The detour was still worth it: it confirmed `dvar_s.current` at `+0x18` from the
+game's own `cmp BYTE PTR [eax+0x18], 0` at `0x6D5815`, `Dvar_RegisterBool` at
+`0x45BB20`, `Dvar_FindVar` at `0x5AE810`, and that `r_smp_backend` is read in
+exactly one place (`0x6D5810`, branching to `Sys_IsMainThread` when clear).
+
+That leaves **`R_RENDERTARGET_RESOLVED_SCENE` (below) as the live lead for #32.**
 
 ### 2. The engine resolves the scene itself
 
