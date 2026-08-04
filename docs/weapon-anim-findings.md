@@ -763,3 +763,497 @@ array live from `DObj_s+0x54` at draw time.
 | `0x4f0` / `0x4f4` | pending weapon / pending forced state | V |
 | `0x524` / `0x528` | **`weapAnim` / `weapAnimLeft`** — id in low bits, toggle at `0x400`, 11 bits | V |
 | `0x52c` | `aimSpreadScale` | V (prior work) |
+
+---
+
+# APPENDIX A — the `weapAnim id -> XAnim slot` table at `0x7967C8`, decoded
+
+*(Second pass, BAC-279. This section closes the `[?]` loose end left at the end of
+Q8 / "What still has to be worked out". Same clean-room rules: every claim below
+was read out of `BlackOps.exe` itself. Nothing was executed. Grades `[V]`/`[I]`/`[?]`
+as defined at the top of this document.)*
+
+## A0. Headline answer
+
+**It is a plain jump table, and it is a simple, static, one-to-one `id -> slot`
+map.** 53 arms, `id = ps->weapAnim & ~0x400`, range-checked `> 0x34 -> default`.
+Every arm is ~35 bytes of the same shape:
+
+```
+  795bf4:  mov  eax, [esp+0x3c]        ; setStartTime  (arg4 of 0x795770)
+  795bf8:  push eax
+  795bf9:  push ecx                    ; (scratch, immediately overwritten)
+  795bfa:  fstp DWORD PTR [esp]        ; blendTime (an st(0) carried in from earlier)
+  795bfd:  push 0x2c                   ; <<< THE SLOT
+  795bff:  push esi                    ; XAnimTree**   (= viewmodel[0].field_00)
+  795c00:  push edi                    ; localClientNum
+  795c01:  mov  eax, ebp               ; <<< weaponIndex, passed in EAX (!)
+  795c03:  mov  DWORD PTR [ebx+0x28], 0x2c   ; cache the slot in the viewmodel
+  795c0a:  call 0x7951e0               ; CG_SetViewmodelAnim
+```
+
+Nine of the 53 arms add a "does this weapon actually have that animation?"
+guard and a fallback; three add a companion *camera* animation. Those are
+detailed in A3. Nothing is data-driven per weapon except those presence checks.
+
+**The three slots the physical-reload feature needs:**
+
+| what | XAnim slot | weapon-file field | reached by `weapAnim` id | duration source |
+|---|---|---|---|---|
+| **RELOAD** | **`0x09`** | `reloadAnim` | **`0x0F`** | `weaponVariantDef+0x24` `reloadTime` |
+| **RELOAD EMPTY** | **`0x0B`** | `reloadEmptyAnim` | **`0x10`** | `weaponVariantDef+0x28` `reloadEmptyTime` |
+| **CHARGING HANDLE / BOLT** | **`0x06`** | `rechamberAnim` | **`0x06`** | `weaponDef+0x3B4` `rechamberTime` |
+| (bolt while ADS) | `0x2C` | `adsRechamberAnim` | `0x09` | — (no duration row; rate stays `1.0`) |
+
+All `[V]`. Cross-checked three independent ways (A2).
+
+Speed-Cola / "quick" reloads are **separate slots**, not a rate change:
+`reloadQuickAnim` = slot `0x0E` (id `0x13`), `reloadQuickEmptyAnim` = slot `0x0F`
+(id `0x14`). A mod that only handles slots `0x09`/`0x0B` will miss a
+Speed-Cola reload entirely. `[V]`
+
+## A1. The slot namespace: slot index == index into the weapon's `szXAnims` array
+
+This is the fact that makes the whole table legible, and it was not established
+before.
+
+`0x7951e0` passes the slot number **verbatim** as the `animIndex` argument of
+`XAnimSetGoalWeight` and `XAnimSetTime`. Therefore **the viewmodel `XAnimTree`'s
+animation indices *are* these slot numbers**, `1 .. 0x41`. `[V — mechanical]`
+
+The nine guarded arms reveal where the names live:
+
+```
+  795e6a:  mov  eax, [esp+0x10]        ; = FUN_00444740(weaponIndex)  -> WeaponVariantDef*
+  795e6e:  mov  ecx, [eax+0x10]        ; wvd->szXAnims   (const char **)
+  795e71:  mov  edx, [ecx+0x64]        ; szXAnims[0x19]
+  795e74:  cmp  BYTE PTR [edx], 0x0    ; empty string  => weapon has no such anim
+```
+
+`0x64/4 = 0x19`, and the slot this arm plays is `0x19`. Across all nine guarded
+arms the checked array index equals the played slot (two deliberate exceptions,
+A3). **So `szXAnims[i]` is the asset name of tree animation `i`.** `[V]`
+
+Anchoring that array against the weapon-asset parse table at `0xB6E6D8`
+(`{const char* name; int offset; int type}`, 12-byte stride, 867 rows; `type == 0`
+marks an XAnim-name field) gives the whole namespace. The anim-name rows occupy
+parse offsets `0x930 .. 0xA30` contiguously at 4-byte stride, and
+
+> **slot = (parseOffset − 0x92C) / 4**
+
+Three independent checks that the base is `0x92C` and not `0x930`: `[V]`
+
+1. `0x795825` gates the ADS blend on `szXAnims[0x104/4 = 0x41]`. `0x92C+0x104 =
+   0xA30 = adsDownAnim`. Slot `0x41` is exactly the slot `0x795590` scrubs with
+   `1.0 - fWeaponPosFrac` (Q8). With base `0x930` it would land on `hideTags`.
+2. `0x7966e6` gates slot `0x39` on `szXAnims[0xE4/4 = 0x39]`. `0x92C+0xE4 = 0xA10
+   = mantleCameraAnim`, and `0x795430` is the *camera*-anim setter (slots
+   `0x35..0x39`).
+3. The `0xB72C08` rate table (Q2) says slot `0x09` is driven by `reloadTime`,
+   `0x0B` by `reloadEmptyTime`, `0x0E`/`0x0F` by the quick variants, `0x3E`/`0x3F`
+   by the left-hand reload times. Base `0x92C` puts `reloadAnim`,
+   `reloadEmptyAnim`, `reloadQuickAnim`, `reloadQuickEmptyAnim`,
+   `reloadEmptyAnimLeft`, `reloadAnimLeft` on exactly those slots.
+
+### The full slot namespace (66 slots, `0x00 .. 0x41`)
+
+| slot | weapon-file field | | slot | weapon-file field |
+|---|---|---|---|---|
+| `0x00` | *(unused — the sweep in `0x7951e0` starts at 1)* | | `0x21` | `lowReadyOutAnim` |
+| `0x01` | `idleAnim` | | `0x22` | `contFireInAnim` |
+| `0x02` | `emptyIdleAnim` | | `0x23` | `contFireLoopAnim` |
+| `0x03` | `fireAnim` | | `0x24` | `contFireOutAnim` |
+| `0x04` | `holdFireAnim` | | `0x25` | `deployAnim` |
+| `0x05` | `lastShotAnim` | | `0x26` | `breakdownAnim` |
+| **`0x06`** | **`rechamberAnim`** | | `0x27` | `detonateAnim` |
+| `0x07` | `meleeAnim` | | `0x28` | `nightVisionWearAnim` |
+| `0x08` | `meleeChargeAnim` | | `0x29` | `nightVisionRemoveAnim` |
+| **`0x09`** | **`reloadAnim`** | | `0x2A` | `adsFireAnim` |
+| `0x0A` | `reloadAnimRight` | | `0x2B` | `adsLastShotAnim` |
+| **`0x0B`** | **`reloadEmptyAnim`** | | **`0x2C`** | **`adsRechamberAnim`** |
+| `0x0C` | `reloadStartAnim` | | `0x2D` | `dtp_in` |
+| `0x0D` | `reloadEndAnim` | | `0x2E` | `dtp_loop` |
+| `0x0E` | `reloadQuickAnim` | | `0x2F` | `dtp_out` |
+| `0x0F` | `reloadQuickEmptyAnim` | | `0x30` | `dtp_empty_in` |
+| `0x10` | `raiseAnim` | | `0x31` | `dtp_empty_loop` |
+| `0x11` | `firstRaiseAnim` | | `0x32` | `dtp_empty_out` |
+| `0x12` | `dropAnim` | | `0x33` | `slide_in` |
+| `0x13` | `altRaiseAnim` | | `0x34` | `mantleAnim` |
+| `0x14` | `altDropAnim` | | `0x35` | `sprintCameraAnim` |
+| `0x15` | `quickRaiseAnim` | | `0x36` | `dtpInCameraAnim` |
+| `0x16` | `quickDropAnim` | | `0x37` | `dtpLoopCameraAnim` |
+| `0x17` | `emptyRaiseAnim` | | `0x38` | `dtpOutCameraAnim` |
+| `0x18` | `emptyDropAnim` | | `0x39` | `mantleCameraAnim` |
+| `0x19` | `sprintInAnim` | | `0x3A` | `fireAnimLeft` |
+| `0x1A` | `sprintLoopAnim` | | `0x3B` | `lastShotAnimLeft` |
+| `0x1B` | `sprintOutAnim` | | `0x3C` | `idleAnimLeft` |
+| `0x1C` | `sprintInEmptyAnim` | | `0x3D` | `emptyIdleAnim` *(left; the parse table reuses the name)* |
+| `0x1D` | `sprintLoopEmptyAnim` | | `0x3E` | `reloadEmptyAnimLeft` |
+| `0x1E` | `sprintOutEmptyAnim` | | `0x3F` | `reloadAnimLeft` |
+| `0x1F` | `lowReadyInAnim` | | **`0x40`** | **`adsUpAnim`** *(the scrubbed ADS pair, Q8)* |
+| `0x20` | `lowReadyLoopAnim` | | **`0x41`** | **`adsDownAnim`** |
+
+`[V]` for the whole table. `0x42` is used as a "no left-hand animation"
+sentinel by the left selector (`0x7959d3`); it is not a real slot. `[V]`
+
+## A2. The table itself
+
+`0x795a3f`: `cmp eax,0x34` / `ja 0x79670f` / `jmp [0x7967c8 + eax*4]`. `[V]`
+
+| id | arm | slot | animation | notes |
+|---|---|---|---|---|
+| `0x00` | `0x795a4f` | *(none)* | — | zeroes weight on slots `1..0x3f`, then `0x795500` picks `idleAnim`(`0x01`) or `emptyIdleAnim`(`0x02`) |
+| `0x01` | `0x795a4f` | *(none)* | — | identical arm to `0x00` |
+| `0x02` | `0x795aff` | `0x03` | `fireAnim` | |
+| `0x03` | `0x795b22` | `0x3A` | `fireAnimLeft` | writes the **left** cache `vm+0x30` |
+| `0x04` | `0x795b45` | `0x05` | `lastShotAnim` | |
+| `0x05` | `0x795b68` | `0x3B` | `lastShotAnimLeft` | left cache |
+| **`0x06`** | `0x795b8b` | **`0x06`** | **`rechamberAnim`** | **bolt / charging handle cycle** |
+| `0x07` | `0x795bae` | `0x2A` | `adsFireAnim` | |
+| `0x08` | `0x795bd1` | `0x2B` | `adsLastShotAnim` | |
+| **`0x09`** | `0x795bf4` | **`0x2C`** | **`adsRechamberAnim`** | **bolt cycle while aiming** |
+| `0x0A` | `0x795c17` | `0x07` | `meleeAnim` | |
+| `0x0B` | `0x795c3a` | `0x08` | `meleeChargeAnim` | |
+| `0x0C` | `0x795c5d` | `0x12` | `dropAnim` | |
+| `0x0D` | `0x795c80` | `0x10` | `raiseAnim` | |
+| `0x0E` | `0x795ca3` | `0x11` | `firstRaiseAnim` | |
+| **`0x0F`** | `0x795cc6` | **`0x09`** | **`reloadAnim`** | **the reload** |
+| **`0x10`** | `0x795ce9` | **`0x0B`** | **`reloadEmptyAnim`** | **the empty reload** |
+| `0x11` | `0x795d0c` | `0x0C` | `reloadStartAnim` | **segmented only** |
+| `0x12` | `0x795d2f` | `0x0D` | `reloadEndAnim` | **segmented only** |
+| `0x13` | `0x795d52` | `0x0E` | `reloadQuickAnim` | Speed-Cola / quick |
+| `0x14` | `0x795d75` | `0x0F` | `reloadQuickEmptyAnim` | Speed-Cola / quick, empty |
+| `0x15` | `0x795d98` | `0x14` | `altDropAnim` | |
+| `0x16` | `0x795dbb` | `0x13` | `altRaiseAnim` | |
+| `0x17` | `0x795dde` | `0x16` | `quickDropAnim` | |
+| `0x18` | `0x795e01` | `0x15` | `quickRaiseAnim` | |
+| `0x19` | `0x795e24` | `0x18` | `emptyDropAnim` | |
+| `0x1A` | `0x795e47` | `0x17` | `emptyRaiseAnim` | |
+| `0x1B` | `0x795e6a` | `0x19` | `sprintInAnim` | guarded; no fallback (does nothing if absent) |
+| `0x1C` | `0x795ea0` | `0x1A` | `sprintLoopAnim` | guarded on `szXAnims[0x19]`; else idle. Also starts camera slot `0x35` |
+| `0x1D` | `0x795f24` | `0x1B` | `sprintOutAnim` | guarded; also **clears** camera slots `0x35..0x39` (`0x7954c0`) |
+| `0x1E` | `0x795f7b` | `0x1C` | `sprintInEmptyAnim` | **falls back to `0x19`** |
+| `0x1F` | `0x795fc3` | `0x1D` | `sprintLoopEmptyAnim` | **falls back to `0x1A`**; camera `0x35` |
+| `0x20` | `0x79601e` | `0x1E` | `sprintOutEmptyAnim` | **falls back to `0x1B`**; camera `0x35` |
+| `0x21` | `0x79611b` | `0x1F` | `lowReadyInAnim` | extra gate on global `*(u8*)0x243FDD4+0x18` |
+| `0x22` | `0x79616e` | `0x20` | `lowReadyLoopAnim` | same gate |
+| `0x23` | `0x7961c4` | `0x21` | `lowReadyOutAnim` | same gate |
+| `0x24` | `0x7960b2` | `0x22` | `contFireInAnim` | |
+| `0x25` | `0x7960d5` | `0x23` | `contFireLoopAnim` | |
+| `0x26` | `0x7960f8` | `0x24` | `contFireOutAnim` | |
+| `0x27` | `0x79620c` | `0x04` | `holdFireAnim` | |
+| `0x28` | `0x79622f` | `0x27` | `detonateAnim` | |
+| `0x29` | `0x796252` | `0x28` | `nightVisionWearAnim` | |
+| `0x2A` | `0x796275` | `0x29` | `nightVisionRemoveAnim` | |
+| `0x2B` | `0x796298` | `0x25` | `deployAnim` | |
+| `0x2C` | `0x7962bb` | `0x26` | `breakdownAnim` | |
+| `0x2D` | `0x7962de` | `0x2D` | `dtp_in` | guarded; camera `0x36` |
+| `0x2E` | `0x796365` | `0x2E` | `dtp_loop` | guarded; camera `0x37` |
+| `0x2F` | `0x7963ec` | `0x2F` | `dtp_out` | guarded; camera `0x38` |
+| `0x30` | `0x796473` | `0x30` | `dtp_empty_in` | **falls back to `0x2D`**; camera `0x36` |
+| `0x31` | `0x796505` | `0x31` | `dtp_empty_loop` | **falls back to `0x2E`**; camera `0x37` |
+| `0x32` | `0x7965a2` | `0x32` | `dtp_empty_out` | **falls back to `0x2F`**; camera `0x38` |
+| `0x33` | `0x79663f` | `0x33` | `slide_in` | guarded |
+| `0x34` | `0x796678` | `0x34` | `mantleAnim` | guarded **and** `FUN_0056AC60(ps) != 0`; camera `0x39` |
+| `>0x34` | `0x79670f` | *(none)* | — | idle + `Com_PrintWarning("WeaponRunXModelAnims: Unknown weapon animation %i\n" @0xA468F0)` |
+
+`[V]` for every row: each was read from the arm's `push imm8` / `mov [ebx+0x28],imm32`
+pair. Note slot `0x0A` (`reloadAnimRight`) is **not reachable from this table** —
+no arm selects it. It is referenced only by the dual-wield helper `0x7956C0`'s
+dispatch byte table. `[V]` for the absence, `[?]` for what actually drives it.
+
+### Independent confirmation from the *writer* side (pmove)
+
+The ids are written by `0x49C6B0(ps, id, isLeftHand)` or inline. In `0x766070`
+(the reload-start chooser) the id and the duration are set together, and they
+agree with the `0xB72C08` rate table on every branch — this is a genuine
+end-to-end cross-check, writer → table → rate table: `[V]`
+
+| pmove site | id set | duration written to `ps->weaponTime` | slot the table gives | `0xB72C08[slot].timeField` |
+|---|---|---|---|---|
+| `0x766121` | `0x14` | `wvd+0x30` `reloadQuickEmptyTime` | `0x0F` `reloadQuickEmptyAnim` | `0x030` ✓ |
+| `0x766138` | `0x10` | `wvd+0x28` `reloadEmptyTime` | `0x0B` `reloadEmptyAnim` | `0x028` ✓ |
+| `0x76615F` | `0x13` | `wvd+0x2C` `reloadQuickTime` | `0x0E` `reloadQuickAnim` | `0x02C` ✓ |
+| `0x766171` | `0x0F` | `wvd+0x24` `reloadTime` | `0x09` `reloadAnim` | `0x024` ✓ |
+| `0x766327` | `0x11` | `wd+0x3EC` `reloadStartTime` | `0x0C` `reloadStartAnim` | *(anim-side row)* ✓ |
+| `0x768E29`, `0x768F89` | `0x12` | `wd+0x3F4` `reloadEndTime` | `0x0D` `reloadEndAnim` | *(anim-side row)* ✓ |
+
+**Correction to Q7 of this document.** The earlier excerpt of `0x766126`–`0x76617A`
+interleaved two different `push`es. The `push 0x13` / `push 0x12` at `0x76612C`,
+`0x766143`, `0x76617C` are the **`weaponstate`** argument to `0x4A1D90`, *not*
+`weapAnim` ids. The `weapAnim` ids are the earlier `push`es feeding `0x49C6B0`
+(`0x14`, `0x10`, `0x13`, `0x0F`), as tabulated above. `[V]`
+
+### The left-hand table at `0x79679C` is not 17 arms
+
+It is **6 arms plus a 17-byte index table** at `0x7967B4`:
+`0x795888`: `cmp eax,0x10 / ja` → `movzx edx, [0x7967B4 + id]` → `jmp [0x79679C + edx*4]`. `[V]`
+
+Index bytes: `00 00 01 05 02 05 05 05 05 05 05 05 05 05 05 03 04`
+
+| left id | arm | slot |
+|---|---|---|
+| `0x00`, `0x01` | `0x7958AA` | sweeps `0x3A..0x3F` to zero, then `0x3C` `idleAnimLeft` |
+| `0x02` | `0x79594B` | `0x3A` `fireAnimLeft` |
+| `0x04` | `0x7959B1` | `0x3B` `lastShotAnimLeft` |
+| **`0x0F`** | `0x79596D` | **`0x3F` `reloadAnimLeft`** |
+| **`0x10`** | `0x79598F` | **`0x3E` `reloadEmptyAnimLeft`** |
+| `0x03`, `0x05..0x0E`, `>0x10` | `0x7959D3` | sentinel `0x42` = "no left animation" |
+
+**The id space is shared between hands** — `0x0F` is "reload" and `0x10` is
+"reload empty" on both sides. `[V]`
+
+## A3. The two apparent off-by-ones are not bugs
+
+`id 0x1C` checks `szXAnims[0x19]` (`sprintInAnim`) but plays slot `0x1A`
+(`sprintLoopAnim`); `id 0x1F` checks `szXAnims[0x1C]` (`sprintInEmptyAnim`) but
+plays `0x1D` (`sprintLoopEmptyAnim`). In both cases the *"in"* animation is used
+as the presence sentinel for the whole set. Every other guarded arm checks the
+slot it plays. `[V]` for the reads; `[I]` for "sentinel" as the intent.
+
+## A4. How a mod addresses the right slot at runtime
+
+### Recommended: read the slot the engine just chose (no table needed)
+
+Every arm caches its result before calling `0x7951E0`:
+
+```
+  795cd5:  mov DWORD PTR [ebx+0x28], 0x09     ; ebx = &cg_viewModelArray[client]
+```
+
+so after `CG_UpdateViewModelAnim` (`0x4B6870`) has run for the frame:
+
+```c
+char *vm     = (char*)(*(void**)0x00C1C6D8) + 0x34 * localClientNum;
+int   slotR  = *(int*)(vm + 0x28);   // right-hand slot the engine is playing
+int   slotL  = *(int*)(vm + 0x30);   // left-hand slot  (0x42 == none)
+```
+
+`[V]` — written unconditionally by every arm; `-1` is written by the
+"start from scratch" paths, `0x42` by the left sentinel. This is robust against
+the fallbacks in A2 (e.g. it tells you the weapon fell back from
+`dtp_empty_in` to `dtp_in`), which a static id→slot lookup cannot.
+
+### Alternative: static lookup
+
+```c
+/* index by (ps->weapAnim & ~0x400); -1 == "no single slot" */
+static const signed char kWeapAnimSlot[0x35] = {
+/*00*/ -1,   -1,   0x03, 0x3A, 0x05, 0x3B, 0x06, 0x2A,
+/*08*/ 0x2B, 0x2C, 0x07, 0x08, 0x12, 0x10, 0x11, 0x09,
+/*10*/ 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x14, 0x13, 0x16,
+/*18*/ 0x15, 0x18, 0x17, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+/*20*/ 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x04,
+/*28*/ 0x27, 0x28, 0x29, 0x25, 0x26, 0x2D, 0x2E, 0x2F,
+/*30*/ 0x30, 0x31, 0x32, 0x33, 0x34,
+};
+/* ids 0x1E,0x1F,0x20,0x30,0x31,0x32 may fall back to 0x19,0x1A,0x1B,0x2D,0x2E,0x2F */
+```
+
+To resolve a fallback yourself, or to test whether a weapon has an animation at all:
+
+```c
+void       *wvd      = ((void**)0x00BE19A8)[weaponIndex];      /* == FUN_00444740 */
+const char **szXAnims = *(const char***)((char*)wvd + 0x10);
+int haveIt = szXAnims[slot] && szXAnims[slot][0];
+```
+
+`[V]` for `0x00BE19A8` (`0x444740` is literally `return (&DAT_00BE19A8)[i];`) and
+for `wvd+0x10`.
+
+### Tree handles
+
+```c
+char       *vm   = (char*)(*(void**)0x00C1C6D8) + 0x34*client;
+void      **hnd  = *(void***)(vm + 0x00);   /* XAnimTree**  -> XAnimSetGoalWeight  */
+void       *tree = *hnd;                    /* XAnimTree*   -> XAnimSetTime/GetTime */
+```
+
+`0x5F4600` is exactly `return *param_1;`, and `0x795590` (the shipping ADS
+scrub) uses precisely this pair. `[V]`
+`vm+0x08` holds an `XAnimTree*` used by `0x7951E0` for its own `XAnimSetTime`
+call; `vm+0x0C` holds the `XAnimTree*` passed as the `tree` argument of
+`XAnimGetLengthMsec` by `0x795040`/`0x7950F0`. Whether `+0x08`, `+0x0C` and `*hnd`
+are the same pointer is **`[?]`** — use `*hnd`, which is what the engine's own
+scrub path uses.
+
+> **Correction to Q5.** `vm+0x0C` is *not* "the weapon-variant def pointer used
+> for the rate lookup". It is an `XAnimTree*`. The variant def comes from
+> `FUN_00444740(weaponIndex)`. `[V]`
+
+### Calling-convention warning
+
+These are **not plain `cdecl`**; MSVC gave them register arguments:
+
+| function | register args | stack args |
+|---|---|---|
+| `0x7951E0` `CG_SetViewmodelAnim` | **`EAX` = weaponIndex** | `(localClientNum, XAnimTree** , slot, float blendTime, int setStartTime)` |
+| `0x795040` rate | **`ESI` = slot** | `(WeaponVariantDef*, XAnimTree*)` |
+| `0x7950F0` start phase | **`EAX` = slot, `EDX` = WeaponVariantDef*** | — |
+| `0x795430` camera-anim set | **`EAX` = weaponIndex, `ECX`/`EDI` scratch** | `(localClientNum, XAnimTree**, …)` |
+
+`[V]` — read off the call sites. Calling `0x7951E0` from C without setting `EAX`
+will read a garbage weapon index. Prefer the raw XAnim primitives (Q4).
+
+## A5. New, and directly useful: the engine already derives phase from `weaponTime`
+
+`0x7950F0` — invoked by `0x7951E0` whenever its `setStartTime` argument is
+non-zero, and its result is handed straight to `XAnimSetTime` — is:
+
+```
+  7950f0:  mov  ecx, [0x2FF5354]
+  7950f7:  mov  esi, [ecx+0x8a3a0]      ; ps->weaponTime      (msec remaining)
+  7950fe:  mov  edi, [ecx+0x8a3a8]      ; ps->weaponTimeLeft
+  795104:  lea  ecx, [eax-6]
+  795107:  cmp  ecx, 0x39 / ja 0x795191 ; -> 0.0f for slots outside 6..0x3F
+  795110:  movzx ecx, [ecx+0x7951a4] / jmp [0x795198 + ecx*4]
+  ...
+  79513f:  mov  ecx, eax                ; eax = the slot's duration in msec
+  795141:  sub  ecx, esi                ;      duration - remaining
+  795144:  cvtsi2ss xmm0, ecx
+  795148:  cvtsi2ss xmm1, eax
+  79514c:  divss xmm0, xmm1             ; -> (duration - weaponTime) / duration
+```
+
+**`startPhase = (durationMsec − ps->weaponTime) / durationMsec`.** `[V]`
+
+- Applies only to slots `{0x06, 0x09..0x18, 0x2C}` (right, using `weaponTime`)
+  and `{0x3E, 0x3F}` (left, using `weaponTimeLeft`). Everything else returns
+  `0.0f`; a slot with no duration field returns `1.0f`. `[V]`
+- `ps` sits at `cg + 0x8A364`: `0x8A3A0 − 0x8A364 = 0x3C` = `weaponTime`,
+  `0x8A3A8 − 0x8A364 = 0x44` = `weaponTimeLeft`, and `cg+0x8A368` (used at
+  `0x4B6870`) is `ps+0x04`, the same field pmove tests with `cmp [esi+4],9`
+  before every `weapAnim` write. `[V]`
+
+Two consequences for BAC-279:
+
+1. **`phase ↔ weaponTime` is the engine's own relation, and it is exactly the
+   linear one.** A mod that drives `ps->weaponTime` from a controller scalar and
+   lets the engine re-derive the phase is working *with* the design, not against
+   it. The linear map is authoritative, not a guess.
+2. **`0x7951E0` will overwrite a scrub** if it is called with `setStartTime != 0`
+   on the same frame. It only calls `XAnimSetTime` when the requested slot
+   changes or the restart toggle flips, so this matters at reload *start*, but a
+   scrub must be applied after `0x4B6870` returns (as Q8 already recommends), not
+   before.
+
+## A6. Segmented (shotgun-style) reloads — what is actually different
+
+`segmentedReload` is `weaponDef + 0x582` at runtime (parse-table row `0x666`
+minus the `0xE4` bias that applies to `WeaponDef` rows). The sequence, from
+`0x76630D` onward: `[V]`
+
+```
+if (weapDef->segmentedReload && weapDef->reloadStartTime /* wd+0x3EC */) {
+    weapAnim      = 0x11;                 // slot 0x0C reloadStartAnim
+    weaponTime    = wd->reloadStartTime;
+    weaponstate   = 0x0D;
+}
+   ... then, once per shell, the ordinary chooser 0x766070 runs again:
+    weapAnim      = 0x0F / 0x10 / 0x13 / 0x14   // slots 0x09 / 0x0B / 0x0E / 0x0F
+    weaponTime    = reloadTime / reloadEmptyTime / quick variants
+   ... and at the end (0x768E08 / 0x768F72):
+if (weapDef->reloadEndTime /* wd+0x3F4 */) {
+    weapAnim      = 0x12;                 // slot 0x0D reloadEndAnim
+    weaponTime    = wd->reloadEndTime;
+    weaponstate   = 0x0F;
+}
+```
+
+So a segmented reload is **not** a looping animation. It is
+`reloadStartAnim` → *N* fresh instances of the **same** `reloadAnim` slot `0x09`
+(one per shell, each announced by flipping the `0x400` toggle so the client
+restarts it) → `reloadEndAnim`. `[V]`
+
+That is better news than Q8's "scrubbing a looping middle section" worry: each
+shell is an ordinary one-shot on slot `0x09` and is individually scrubbable by
+the same code path as a magazine reload. The extra work is (a) noticing the
+toggle flip to know a new shell started, and (b) that `weaponTime` is reloaded
+per shell rather than once. **The "different problem" is bookkeeping, not a
+different animation mechanism.** `[I]` — the mechanism is `[V]`; "therefore it is
+easy" is a judgement.
+
+**`[?]` Which weapons set `segmentedReload`.** That lives in the weapon assets
+inside the fastfiles, not in the executable. Not determinable here.
+
+## A7. Structure offsets used above, and the `0xE4` bias explained
+
+The 867-row parse table at `0xB6E6D8` describes **two** structures, which is why
+some offsets appear twice with unrelated names (e.g. `0x24` is both `reloadTime`
+and `flameVar_streamChunkDistSwayVelMax`). `[V]`
+
+- `WeaponVariantDef *wvd = ((void**)0x00BE19A8)[weaponIndex]` (`= FUN_00444740`).
+  Its rows use the parse offset **directly**: `wvd+0x24 reloadTime`,
+  `+0x28 reloadEmptyTime`, `+0x2C reloadQuickTime`, `+0x30 reloadQuickEmptyTime`,
+  `+0x3C altRaiseTime`. `[V]`
+- `WeaponDef *wd = *(void**)(wvd + 0x08)`, which is the same pointer
+  `BG_GetWeaponDef` / `0x425770` returns. Its rows are the parse offset
+  **minus `0xE4`**: `wd+0x3B4 rechamberTime` (row `0x498`),
+  `wd+0x3EC reloadStartTime` (row `0x4D0`), `wd+0x3F4 reloadEndTime` (row `0x4D8`),
+  `wd+0x582 segmentedReload` (row `0x666`). `[V]` — established by
+  `0x795040`, which adds the `0xB72C08` *animField* offsets to `*(wvd+8)` and the
+  *timeField* offsets to `wvd` itself, and confirmed at `0x76630D` /
+  `0x766378` where `[ebx+0x582]` and `[ebx+0x56A]` share a base.
+- `const char **szXAnims = *(const char***)(wvd + 0x10)`, indexed by slot. `[V]`
+  Whether this array is a per-variant override allocation or simply points into
+  `wd` is **`[?]`** and does not matter — the expression above is what the engine
+  evaluates.
+
+> The claim in the task brief that "field-table offsets are `0xE4` larger than
+> those used off `Weapon_GetDef 0x425770`" is **backwards**: the bias applies to
+> the `WeaponDef` rows (the struct `0x425770` returns), and does **not** apply to
+> the `WeaponVariantDef` rows (`reloadTime` and friends), which are direct. `[V]`
+
+## A8. What is still not established
+
+- **`[?]` Whether the viewmodel tree really carries an entry for every slot at
+  runtime.** Slot index == tree `animIndex` is `[V]`, but if a weapon leaves
+  `szXAnims[9]` empty the tree may have no entry `9` at all —
+  `XAnimFindEntry (0x86C5A0)` would return 0 and both `XAnimSetTime` and
+  `XAnimGetTime` would silently no-op. **Check `szXAnims[slot][0] != 0` before
+  driving a slot, and treat a `XAnimGetTime` of exactly `0.0` on an
+  otherwise-active reload as "no entry", not "phase zero".**
+- **`[?]` Slot `0x0A` `reloadAnimRight`.** Unreachable from either jump table.
+  Only the dual-wield helper `0x7956C0`'s dispatch table mentions it.
+- **`[?]` `0x7956C0`'s exact role.** It runs after the main selector when
+  `weapDef+0x56A` (dual-wield) is set, sweeps left slots `0x3A..0x3F` asking
+  `0x4321F0` for each one's weight, and forces `0x3C idleAnimLeft` if they are all
+  zero. Traced enough to know it cannot disturb a right-hand reload; not traced
+  further.
+- **`[?]` The gate at `*(u8*)0x243FDD4 + 0x18`** used by the three `lowReady` ids.
+- **`[?]` `FUN_0056AC60(ps)`**, the second gate on `mantleAnim` (id `0x34`).
+- **`[?]` Which ids the *server* forces via `0x76B0C0` / `forceviewmodelanimation`.**
+  That path writes `weapAnim` directly (`0x76B126`, `0x76B183`, `0x76B1AA`,
+  `0x76B1D4`, `0x76B1FB`) with ids `0x0F`, `0x02`, `0x2A`, `0x29` among others;
+  `0x76B183` writing id `0x0F` alongside `weaponTime = reloadTime` is the same
+  reload the table maps to slot `0x09`. `[V]` for that one row; the rest of the
+  state machine was not enumerated.
+- **`[?]` `weapAnim` id `0x35`.** Written at `0x766D1B` (weaponstate `0x2F`,
+  `weaponTime = 2000`), it is **out of range** of the `0x34` bound and lands on
+  the default arm, which drops to idle and prints
+  `"WeaponRunXModelAnims: Unknown weapon animation %i"`. Either intentional
+  (a logic-only state with no viewmodel animation) or a shipped bug. Not
+  resolvable statically.
+
+## A9. Additions to the address table
+
+| address | meaning | grade |
+|---|---|---|
+| `0x7967C8` | `weapAnim` → arm jump table, 53 `u32` entries, decoded in A2 | V |
+| `0x79679C` | left-hand arm table, **6** `u32` entries | V |
+| `0x7967B4` | left-hand `id → arm index` byte table, 17 bytes | V |
+| `0x00BE19A8` | `WeaponVariantDef*` array indexed by weapon index | V |
+| `0x444740` | `BG_GetWeaponVariantDef(i)` = `((void**)0xBE19A8)[i]` | V |
+| `wvd+0x08` | `WeaponDef*` (same pointer `0x425770` returns) | V |
+| `wvd+0x10` | `const char **szXAnims`, indexed by slot | V |
+| `0x5F4600` | `return *p;` — turns the `XAnimTree**` at `vm+0x00` into `XAnimTree*` | V |
+| `0x7950F0` | start phase = `(duration − ps->weaponTime) / duration`, slots 6..0x18/0x2C/0x3E/0x3F | V |
+| `0x795430` | set a **camera** anim, sweeps slots `0x35..0x39` | V |
+| `0x7954C0` | clear all camera anim weights, slots `0x35..0x39` | V |
+| `0x795500` | idle chooser → slot `0x01 idleAnim` or `0x02 emptyIdleAnim` | V |
+| `0x7956C0` | dual-wield left-idle fallback → slot `0x3C` | V |
+| `0x49C6B0` | `PM_SetWeaponAnim(ps, id, isLeftHand)` — writes `ps+0x524`/`+0x528` with the `0x400` toggle | V |
+| `0x4A1D90` | `PM_SetWeaponState(ps, state)` (the `push 0x12`/`0x13` values in Q7) | I |
+| `0x766070` | reload chooser: picks id `0x0F`/`0x10`/`0x13`/`0x14` + matching duration | V |
+| `0xA468F0` | `"WeaponRunXModelAnims: Unknown weapon animation %i\n"` | V |
+| `cg+0x8A364` | `playerState_t` inside the `cg` struct at `[0x2FF5354]` | V |
