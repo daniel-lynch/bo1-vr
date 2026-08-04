@@ -49,6 +49,7 @@
 #define PREFERRED_BASE   0x400000u
 #define VA_R_SetViewParms 0x6C7F80u
 #define VA_R_RenderScene  0x6C8C40u
+#define VA_R_RenderSceneInternal 0x6C8CD0u
 /* frontEndData pointer, and the bump-allocated view-parms counter inside it.
  * camera-hook-plan 5.1 names slot exhaustion the HIGHEST risk of rendering the
  * scene twice, and gives exactly this as the test. */
@@ -458,6 +459,52 @@ static void switch_consume(const char *name)
     DeleteFileA(path);
 }
 
+/* A SWITCH THAT CARRIES A NUMBER.
+ *
+ * Same directory and the same "edit a file, no rebuild" idiom as the flags, but
+ * for the settings that are a value rather than a yes/no. World scale is the
+ * first: it has no correct answer that can be derived, only one that is found
+ * by feel in the headset, so it has to be adjustable by the person wearing it
+ * between one look and the next.
+ *
+ * Parsed by hand rather than with the CRT. This DLL deliberately does not pull
+ * in the CRT's locale machinery, and atof() is locale-sensitive -- on a comma
+ * -decimal locale "1.5" parses as 1. A knob that silently means something
+ * different on someone else's machine is worse than no knob. */
+static int switch_float(const char *name, float *out)
+{
+    char path[MAX_PATH], buf[64];
+    HANDLE h;
+    DWORD got = 0;
+    int i = 0, neg = 0;
+    double v = 0.0, frac = 0.0, scale = 1.0;
+    int digits = 0;
+
+    lstrcpynA(path, "C:\\bo1vr\\", MAX_PATH);
+    lstrcatA(path, name);
+    h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    if (!ReadFile(h, buf, sizeof buf - 1, &got, NULL)) got = 0;
+    CloseHandle(h);
+    if (!got) return 0;
+    buf[got] = 0;
+
+    while (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\r' || buf[i] == '\n') i++;
+    if (buf[i] == '-') { neg = 1; i++; } else if (buf[i] == '+') i++;
+    for (; buf[i] >= '0' && buf[i] <= '9'; i++) { v = v * 10.0 + (buf[i] - '0'); digits++; }
+    if (buf[i] == '.') {
+        i++;
+        for (; buf[i] >= '0' && buf[i] <= '9'; i++) {
+            scale *= 0.1; frac += (buf[i] - '0') * scale; digits++;
+        }
+    }
+    if (!digits) return 0;                 /* an empty or junk file is not a value */
+    v = (v + frac) * (neg ? -1.0 : 1.0);
+    *out = (float)v;
+    return 1;
+}
+
 static void ht_request_recentre(int immediate, const char *who)
 {
     InterlockedExchange(&g_recentre, 1);
@@ -547,6 +594,35 @@ static void headtrack_controls(void)
         if (switch_on("recentre.on")) {
             switch_consume("recentre.on");
             ht_request_recentre(1, "recentre.on (consumed)");
+        }
+
+        /* WORLD SCALE, re-read live.
+         *
+         * Game units per metre: how much real head movement and eye separation
+         * are worth in the world. The engine's unit is ASSUMED to be the inch
+         * (camera-hook-plan 5.4), hence the 39.37 default, but the assumption
+         * has never been confirmed against anything -- and even if it is exactly
+         * right, "correct" and "comfortable" are not the same number. A smaller
+         * value makes the world feel bigger and the player smaller.
+         *
+         * This is deliberately live rather than read once at load: it is tuned
+         * by feel with the headset on, and a setting you must restart the game
+         * to try is a setting nobody converges on. Values outside 1..1000 are
+         * rejected -- a typo that lands at 0 would collapse the eye separation
+         * and the head translation to nothing, which reads as "head tracking
+         * broke" rather than as a bad number. */
+        {
+            static float applied;
+            float upm;
+            if (switch_float("worldscale.txt", &upm) && upm >= 1.0f && upm <= 1000.0f) {
+                if (upm != applied) {
+                    applied = upm;
+                    poses_set_units_per_metre(upm);
+                    camlog("world scale: %.3f units/metre (was %.3f) -- from worldscale.txt",
+                           upm, POSES_UNITS_PER_METRE_DEFAULT);
+                    changed = 1;
+                }
+            }
         }
     }
 
@@ -1156,6 +1232,44 @@ static int  (*g_cap_enabled)(void);   /* gameframe.asi's bo1vr_capture_enabled *
 static int  g_dual_logged;
 static int  g_mono_logged;
 
+/* R_RenderSceneInternal 0x6C8CD0 -- the function that actually builds the scene
+ * view. See the note at the hook site in init(). */
+typedef void (__cdecl *pfn_rsinternal)(void *refdef, unsigned arg2);
+static pfn_rsinternal o_R_RenderSceneInternal;
+static int  g_internal_hooked;   /* 0 -> keep the old whole-frame eye behaviour */
+static LONG g_internal_calls;
+
+/* THE SCENE VIEW, AND ONLY THE SCENE VIEW.
+ *
+ * With this in place the eye stops being a mode that hangs over the whole frame
+ * and becomes what it should always have been: a property of one render. The
+ * previous build had to leave CAM_EYE_CENTRE set permanently because the eye had
+ * to still be set when the scene view was built somewhere we were not watching;
+ * that also handed the head basis and the headset's 124-degree FOV to every
+ * other view built through R_SetViewParms -- shadow, portal, sun -- which is
+ * wrong even where it is not visible.
+ *
+ * Set on entry, RESTORED on exit rather than cleared, so this composes with the
+ * dual-view path (which sets eye 0 / eye 1 around its own two calls) instead of
+ * fighting it. */
+static void __cdecl hk_R_RenderSceneInternal(void *refdef, unsigned arg2)
+{
+    LONG prev = g_eye;
+    LONG n = InterlockedIncrement(&g_internal_calls);
+
+    if (n == 1)
+        camlog("R_RenderSceneInternal reached -- eye scoping is live (entry eye=%ld)", prev);
+
+    /* Only take over when nobody else has claimed the eye. Inside dual view the
+     * caller has already set 0 or 1 and that is the more specific answer. */
+    if (prev == CAM_EYE_NONE && g_cap_enabled && !g_cap_enabled())
+        bo1vr_camera_set_eye(CAM_EYE_CENTRE);
+
+    o_R_RenderSceneInternal(refdef, arg2);
+
+    bo1vr_camera_set_eye((int)prev);
+}
+
 static void __cdecl hk_R_RenderScene(void *refdef)
 {
     /* Log the FIRST call unconditionally. Without this, "R_RenderScene never
@@ -1236,6 +1350,16 @@ static void __cdecl hk_R_RenderScene(void *refdef)
         }
         bo1vr_camera_set_eye(CAM_EYE_CENTRE);
         o_R_RenderScene(refdef);
+        /* Once R_RenderSceneInternal is hooked, the eye is scoped there and
+         * leaving it set here would put it back to being a whole-frame mode --
+         * the very thing that hook exists to stop. Clear it, and keep the old
+         * leave-it-set behaviour ONLY as the degraded path for when that hook
+         * could not be installed, so a hook failure loses precision rather than
+         * losing head tracking altogether. */
+        if (g_internal_hooked) {
+            bo1vr_camera_set_eye(CAM_EYE_NONE);
+            return;
+        }
         /* AND IT IS DELIBERATELY LEFT SET -- do not "fix" this to CAM_EYE_NONE.
          *
          * MEASURED: R_SetViewParms (0x6C7F80) has five call sites --
@@ -1318,7 +1442,7 @@ static void __cdecl hk_R_RenderScene(void *refdef)
 static DWORD WINAPI init(LPVOID p)
 {
     unsigned char *base = (unsigned char *)GetModuleHandleA(NULL);
-    void *target, *scene;
+    void *target, *scene, *internal;
     MH_STATUS st;
 
     (void)p;
@@ -1371,6 +1495,40 @@ static DWORD WINAPI init(LPVOID p)
         camlog("hooked R_RenderScene %p -- DUAL VIEW (two renders per frame)", scene);
     else
         camlog("FAILED to hook R_RenderScene at %p -- falling back to alternate-eye", scene);
+
+    /* AND THE FUNCTION THAT ACTUALLY BUILDS THE SCENE VIEW.
+     *
+     * R_RenderScene (0x6C8C40) turned out not to be it -- see the note in
+     * hk_R_RenderScene. R_RenderSceneInternal (0x6C8CD0) is: Ghidra shows it
+     * bump-allocating a view-parms slot out of the pool and calling
+     * R_SetViewParms exactly once, at 0x6C8D96,
+     *
+     *     puVar1 = frontEndData + 0x88000 + slot * 0x140;   // sizeof GfxViewParms
+     *     slot++;
+     *     R_SetViewParms();
+     *     ... FUN_006c6450(...)                             // the scene render
+     *
+     * which independently confirms both the 0x140 stride and the
+     * frontEndData+0x88000 pool base this file's slot watch already assumed.
+     *
+     * Verified before hooking: it ends in a plain `ret` at 0x6C8E3F, so it is
+     * __cdecl and the caller cleans; the function spans 0x6C8CD0..0x6C8E3F, so
+     * the R_SetViewParms at 0x6C8D96 is inside it while the ones at 0x6C8E73
+     * and 0x6C8F5B are not; and it has exactly one caller (0x6CF077).
+     *
+     * Bracketing HERE is what lets the eye stop being a global mode. */
+    internal = base + (VA_R_RenderSceneInternal - PREFERRED_BASE);
+    if (MH_CreateHook(internal, (void *)hk_R_RenderSceneInternal,
+                      (void **)&o_R_RenderSceneInternal) == MH_OK &&
+        MH_EnableHook(internal) == MH_OK) {
+        g_internal_hooked = 1;
+        camlog("hooked R_RenderSceneInternal %p -- the eye is now SCOPED to the scene view",
+               internal);
+    } else {
+        camlog("FAILED to hook R_RenderSceneInternal at %p -- falling back to leaving the "
+               "eye set across the whole frame (works, but also catches shadow/portal views)",
+               internal);
+    }
     return 0;
 }
 

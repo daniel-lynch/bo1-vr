@@ -1134,3 +1134,55 @@ the host's own filename; the bench run confirms it:
 ```
 
 Bench green, exit 0.
+
+## 18. Scoping the eye, a world-scale knob, and a cheap crosshair experiment
+
+Three queue items, none yet playtested.
+
+**#40 — the eye is now scoped to the scene view.** §16.1 left `CAM_EYE_CENTRE`
+set permanently because the scene view was built somewhere we were not watching.
+That worked, but it also handed the head basis and the headset's 124-degree FOV
+to every other view built through `R_SetViewParms` — shadow, portal, sun.
+
+`R_RenderSceneInternal` (`0x6C8CD0`) is the right place, and Ghidra settles it:
+
+```c
+puVar1 = frontEndData + 0x88000 + slot * 0x140;   /* sizeof GfxViewParms */
+slot++;
+R_SetViewParms();
+... FUN_006c6450(...)                              /* the scene render */
+```
+
+which independently confirms the `0x140` stride and the `frontEndData+0x88000`
+pool base this project's slot watch already assumed. Verified before hooking:
+plain `ret` at `0x6C8E3F` so it is `__cdecl`; the function spans
+`0x6C8CD0..0x6C8E3F`, so the `R_SetViewParms` at `0x6C8D96` is inside it while
+`0x6C8E73` and `0x6C8F5B` are not; one caller (`0x6CF077`).
+
+The hook saves and RESTORES the eye rather than clearing it, so it composes with
+the dual-view path instead of fighting it — and it only claims the eye when
+nobody else has, since inside dual view the caller's 0/1 is the better answer.
+If the hook fails to install, the old leave-it-set behaviour is kept, so a hook
+failure costs precision rather than head tracking.
+
+**#43 — world scale, live.** `worldscale.txt` in `C:\bo1vr` sets game units per
+metre (default 39.37, the inch assumption from camera-hook-plan §5.4). Re-read
+about once a second, because this is tuned by feel with the headset on and a
+setting that needs a restart is one nobody converges on. Values outside 1..1000
+are rejected: a typo landing at 0 would collapse eye separation and head
+translation to nothing, which reads as "head tracking broke" rather than as a
+bad number. Parsed by hand — `atof` is locale-sensitive and would read "1.5" as
+1 on a comma-decimal locale.
+
+**#41 — a cheap experiment first.** The crosshair follows the head because it is
+drawn in 2D at screen centre. But BO1 registers BOTH `cg_drawCrosshair`
+(`0x4A3EB8`) and `cg_drawCrosshair3D` (`0x4A3ED3`) — both `Dvar_RegisterBool`,
+both defaulting to 1. A 3D crosshair is by definition projected from the weapon
+into the world, which is the behaviour we want. If the 2D one is merely drawn on
+top, turning it off may reveal a correct world-space crosshair for nothing.
+Wired as `xhair3d.on`, opt-in, because it is a hypothesis and not a finding.
+
+**Bench.** Both modules build clean and the bench is unchanged. Worth recording
+that `fakegame.exe` exits **5** with no plugins loaded at all, so that code is
+its baseline and not a signal. An earlier note in this session claimed exit 0;
+that was reading `tail`'s status through a pipeline rather than proton's.
