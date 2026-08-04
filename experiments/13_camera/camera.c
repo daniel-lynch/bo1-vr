@@ -231,6 +231,7 @@ static volatile LONG g_eye = CAM_EYE_NONE;
 static float g_aim_fwd[3];             /* the game's aim forward, world space   */
 static float g_aim_ndc[2];             /* where that lands in the rendered view */
 static int   g_aim_ndc_ok;
+static volatile LONG g_aim_fresh;   /* set per scene view, CONSUMED by the getter */
 static int  (*g_get_fov)(int, float *, float *);   /* gameframe.asi's bo1vr_get_eye_fov */
 static unsigned char *g_base;                      /* image base, for the slot watch */
 static unsigned g_max_slots;
@@ -256,6 +257,10 @@ __declspec(dllexport) void bo1vr_camera_set_eye(int eye)
  * geometry. Neither has to learn the other's job. */
 __declspec(dllexport) int bo1vr_camera_get_aim_ndc(float *x, float *y)
 {
+    /* CONSUME the freshness token. A menu frame renders no scene, so nothing
+     * sets it, so this returns 0 and gameframe.asi draws nothing -- rather than
+     * reusing the last gameplay aim over a screen that has no gun in it. */
+    if (!InterlockedExchange(&g_aim_fresh, 0)) return 0;
     if (!g_aim_ndc_ok || !x || !y) return 0;
     *x = g_aim_ndc[0];
     *y = g_aim_ndc[1];
@@ -1267,6 +1272,18 @@ void __cdecl hk_body(void *out, void *in)
             } else {
                 g_aim_ndc_ok = 0;
             }
+            /* THIS FRAME HAD A SCENE. Set last, and consumed by the getter.
+             *
+             * Without it the reticle is drawn from whatever the last scene left
+             * behind, so it hangs over the main menu and the loading screens --
+             * pointing at nothing, because there is no weapon. Playtest: "the
+             * red one is permanently on as well ... not good for menus".
+             *
+             * A stale-value problem wants a freshness token, not a guess about
+             * which UI states exist: 2D screens simply never reach this code, so
+             * "was this computed since the last time anyone asked" is exactly
+             * the right question and needs no list of menus to maintain. */
+            InterlockedExchange(&g_aim_fresh, 1);
         }
     }
 

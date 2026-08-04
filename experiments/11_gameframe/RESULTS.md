@@ -1228,3 +1228,37 @@ that nothing regressed (exit 5, the baseline). Two things to watch on the first
 playtest: whether the reticle sits where shots actually land, and whether drawing
 at Present interacts with the freeze history in §10-§13. Delete `camera.asi`'s
 export or revert this commit to remove it.
+
+### 19.1 It draws — now make it the only one, and only in a scene
+
+First playtest of the reticle: "yep have two crosshairs now. the red one is
+permanently on as well, kinda nice for ADS at the moment but not good for menus".
+
+So the geometry works and the reticle is useful. Two defects, both about WHEN it
+draws rather than where.
+
+**Two crosshairs.** The game's flat one is still on, drawn at screen centre —
+which with head tracking live is wherever the player is looking. Next to a
+reticle that shows the weapon, it does not merely duplicate, it contradicts.
+`xhair3d.on` already forces `cg_drawCrosshair` to 0; it is now enabled by
+default in the live config. The switch was originally an experiment testing
+whether `cg_drawCrosshair3D` would show through; that was refuted (§19), and the
+name is kept only because it is already in a config, but it now means "the VR
+reticle is the crosshair".
+
+**Permanently on.** The reticle was drawn from whatever the last scene left
+behind, so it hung over menus and loading screens, pointing at nothing.
+
+The fix is a freshness token rather than a list of UI states to special-case:
+`hk_body` sets it whenever it computes an aim, and `bo1vr_camera_get_aim_ndc`
+CONSUMES it. A 2D screen never reaches that code, so nothing sets it, so the
+getter returns 0 and nothing is drawn. "Was this computed since the last time
+anyone asked" is exactly the right question, and unlike an enumeration of menus
+it cannot fall out of date as the game's states are discovered.
+
+Also added `noreticle.on`, because a drawing feature with no off switch is one
+playtest away from being in the way.
+
+**Still open:** the pause menu renders the frozen scene behind it, so the token
+is set and the reticle will draw there. Whether that is wrong is a judgement
+call best made wearing the headset.

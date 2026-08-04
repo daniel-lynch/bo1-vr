@@ -154,7 +154,8 @@ static LONG  g_gate_max_spins;
 static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
 static int g_smpoff;                /* smpoff.on: force r_smp_backend to 0 */
 static int g_dof;                   /* dof.on: KEEP the game's depth of field */
-static int g_xhair3d;               /* xhair3d.on: hide the 2D crosshair (experiment) */
+static int g_xhair3d;               /* xhair3d.on: hide the flat 2D crosshair       */
+static int g_noreticle;             /* noreticle.on: do not draw the VR reticle     */
 static int g_nowaitlock;            /* nowaitlock.on: restore the racy order */
 static LONG g_waitlocks;            /* proof the lock around WaitGetPoses ran */
 static volatile LONG g_gd_calls;
@@ -1186,10 +1187,11 @@ static void read_opts(void)
     g_smpoff   = opt("smpoff.on");
     g_dof      = opt("dof.on");
     g_xhair3d  = opt("xhair3d.on");
+    g_noreticle = opt("noreticle.on");
     glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d smpoff=%d",
          g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock, g_smpoff);
-    glog("BISECT: dof=%d (dof.on KEEPS the game's depth of field; default is to force it off) xhair3d=%d",
-         g_dof, g_xhair3d);
+    glog("BISECT: dof=%d (dof.on KEEPS the game's depth of field; default is to force it off) "
+         "xhair3d=%d noreticle=%d", g_dof, g_xhair3d, g_noreticle);
 }
 
 /* ------------------------------------------------- per-frame timing capture
@@ -1440,17 +1442,21 @@ static dvar_force_t g_forced[] = {
       "SMP backend A/B (RESULTS.md 15: refuted, off by default)" },
     { "r_dof_enable",  0, &g_dof,    1,
       "depth of field blurs the iron sights and whatever you are aiming at" },
-    /* UNTESTED HYPOTHESIS, hence opt-in. The crosshair follows the head rather
-     * than the gun because it is drawn in 2D at screen centre, and screen centre
-     * is now wherever the player is looking. BO1 registers BOTH cg_drawCrosshair
-     * and cg_drawCrosshair3D (0x4A3EB8 and 0x4A3ED3, both Dvar_RegisterBool,
-     * both defaulting to 1), and a 3D crosshair is by definition projected from
-     * the weapon into the world -- which is exactly the behaviour we want. If
-     * the 2D one is simply drawn on top, turning it off may reveal a correct
-     * world-space one for free. If instead the crosshair just disappears, that
-     * answers the question too, and #41 does it the hard way. */
+    /* THE GAME'S 2D CROSSHAIR, now that we draw a correct one.
+     *
+     * It is drawn at screen centre, which with head tracking live is wherever
+     * the player is LOOKING rather than where the weapon points -- so it is not
+     * merely redundant next to the VR reticle, it actively contradicts it.
+     * Playtest with both: "yep have two crosshairs now."
+     *
+     * The switch predates the reticle: it was an experiment testing whether
+     * cg_drawCrosshair3D (registered at 0x4A3ED3, also defaulting to 1) would
+     * reveal a world-projected crosshair once the 2D one was off. It does not --
+     * "no cross hair now" -- which is what made drawing our own necessary. The
+     * name is kept because the file is now part of someone's config, but it now
+     * means "the VR reticle is the crosshair". */
     { "cg_drawCrosshair", 0, &g_xhair3d, 0,
-      "xhair3d.on: drop the 2D screen-centre crosshair and see if the 3D one shows" },
+      "xhair3d.on: hide the flat 2D crosshair; the VR reticle replaces it" },
 };
 #define N_FORCED ((int)(sizeof g_forced / sizeof g_forced[0]))
 
@@ -1765,6 +1771,7 @@ static void draw_aim_reticle(IDirect3DSurface9 *bb)
     int n = 0;
 
     if (g_reticle_state < 0 || !g_dev || !bb) return;
+    if (g_noreticle) return;                  /* noreticle.on: back to the game's own */
     if (!g_get_aim_ndc) {
         HMODULE cam = GetModuleHandleA("camera.asi");
         if (cam) g_get_aim_ndc = (int (*)(float *, float *))
