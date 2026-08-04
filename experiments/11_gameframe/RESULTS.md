@@ -1080,3 +1080,57 @@ process — the main menu, whose background is two static cameras (origins
 `243.500 478.300 105.800` and `52.033 457.121 51.783`, unchanged across every
 sample in three separate runs). Two playtest reports about *gameplay* were
 analysed off *menu* frames. Now sampling four consecutive calls every 3600.
+
+## 17. Forced dvars, generalised — and the ADS blur
+
+§16.2's playtest landed head tracking and the FOV ("I actually feel like I'm in
+the game rather than the game being super close to my eyes"), and turned up a
+concrete rendering complaint: **depth of field is applied when aiming down
+sights, and it blurs the iron sights and whatever you are shooting at.** On a
+flat screen that DOF is an effect; through a headset it lands on exactly the two
+things you need sharp.
+
+t5-rtx names `r_dof_enable` among the dvars it forces off, and it is in our
+binary. Verified as a registration we can actually reach, straight off the
+disassembly at `0x6CC68C`:
+
+```
+6cc693:  push $0xb53e40   ; name  = "r_dof_enable"
+6cc691:  push $0x1        ; value = 1
+6cc68c:  push $0x4001     ; flags
+6cc687:  push $0xb53e1c   ; desc
+6cc69d:  call 0x45bb20    ; Dvar_RegisterBool -- the function we already hook
+6cc6a2:  mov  %eax,0x3b1fddc
+```
+
+Same `Dvar_RegisterBool` (`0x45BB20`) the `r_smp_backend` work verified in §15,
+same cdecl `(name, value, flags, desc)` order. So the existing machinery reaches
+it; what it lacked was a second entry.
+
+**Generalised to a table.** `my_regbool` now walks `g_forced[]` and each entry
+carries which option gates it and which way that option reads — `invert 0` for
+opt-in experiments (`r_smp_backend`, still off by default), `invert 1` for things
+forced by default with an escape hatch (`r_dof_enable`, restored by `dof.on`).
+
+**Two safety additions, because the per-frame path writes a BYTE at `+0x18`:**
+
+* the bool type id is now *learned* from the return of a real
+  `Dvar_RegisterBool` call rather than assumed, and a dvar whose type does not
+  match is refused with a loud log. On an int or float dvar that byte write
+  would have clobbered the low byte of a live value.
+* `read_opts()` is called from `my_regbool` itself. Registration happens during
+  engine init, long before the first Present, so without it every entry would
+  read its option flag as 0 and an opt-out entry would fire even when the user
+  had asked for the game's behaviour back.
+
+**And a bench regression caught before it shipped.** Making the
+`Dvar_RegisterBool` hook unconditional (the type check needs it) meant
+`fakegame.exe` would get a trampoline written over whatever lives at its
+`base+0x5BB20` — every address in that block is a BlackOps VA. Now guarded by
+the host's own filename; the bench run confirms it:
+
+```
+[gameframe] dvar: host is 'fakegame.exe', not BlackOps.exe -- Dvar_RegisterBool NOT hooked
+```
+
+Bench green, exit 0.

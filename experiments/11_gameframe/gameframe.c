@@ -153,6 +153,7 @@ static LONG  g_gate_max_spins;
  * now consults them too. */
 static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
 static int g_smpoff;                /* smpoff.on: force r_smp_backend to 0 */
+static int g_dof;                   /* dof.on: KEEP the game's depth of field */
 static int g_nowaitlock;            /* nowaitlock.on: restore the racy order */
 static LONG g_waitlocks;            /* proof the lock around WaitGetPoses ran */
 static volatile LONG g_gd_calls;
@@ -1182,8 +1183,10 @@ static void read_opts(void)
     g_probe2   = opt("probe2.on");
     g_nowaitlock = opt("nowaitlock.on");
     g_smpoff   = opt("smpoff.on");
+    g_dof      = opt("dof.on");
     glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d smpoff=%d",
          g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock, g_smpoff);
+    glog("BISECT: dof=%d (dof.on KEEPS the game's depth of field; default is to force it off)", g_dof);
 }
 
 /* ------------------------------------------------- per-frame timing capture
@@ -1400,23 +1403,91 @@ static void perf_row(double total_ms)
 typedef void *(__cdecl *pfn_dvar_findvar)(const char *);
 typedef void *(__cdecl *pfn_dvar_regbool)(const char *, int, unsigned int, const char *);
 
-static int   g_smp_state;        /* 0 looking, 1 live, -1 gave up */
-static void *g_smp_dvar;
-static LONG  g_smp_resets;       /* frames the engine had put it back to 1 */
-static int   g_smp_registered;   /* 1 once we intercepted the registration */
 static pfn_dvar_regbool real_regbool;
+static int mem_readable(const void *p, SIZE_T n);
 
-/* Registration-time override -- see the note at the hook site in DllMain.
- * Only r_smp_backend is touched; every other bool dvar passes through
- * untouched, which matters because this runs for ALL of them. */
+/* THE FORCED-DVAR TABLE.
+ *
+ * This started as one hard-coded lever for r_smp_backend. The playtest that
+ * asked for a second one (r_dof_enable) made the shape obvious, and the
+ * machinery is worth sharing: find the dvar, VERIFY it is the one we meant by
+ * reading its name back, verify it is actually a bool, and only then write.
+ *
+ * `enable` points at the option flag that gates the entry, and `invert` says
+ * which way that flag reads:
+ *   invert 0 -- the option turns the override ON  (opt-in; experiments)
+ *   invert 1 -- the option turns the override OFF (opt-out; things we believe
+ *               should be forced by default, with an escape hatch)
+ */
+typedef struct {
+    const char *name;
+    int         want;        /* value to force */
+    const int  *enable;      /* option flag gating this entry */
+    int         invert;      /* see above */
+    const char *why;
+    void       *dvar;
+    int         state;       /* 0 looking, 1 live, -1 gave up */
+    LONG        resets;      /* frames the engine had put the value back */
+    int         tries;
+    int         registered;  /* 1 once intercepted at registration */
+} dvar_force_t;
+
+static dvar_force_t g_forced[] = {
+    { "r_smp_backend", 0, &g_smpoff, 0,
+      "SMP backend A/B (RESULTS.md 15: refuted, off by default)" },
+    { "r_dof_enable",  0, &g_dof,    1,
+      "depth of field blurs the iron sights and whatever you are aiming at" },
+};
+#define N_FORCED ((int)(sizeof g_forced / sizeof g_forced[0]))
+
+static int forced_active(const dvar_force_t *f)
+{
+    if (!f->enable) return 1;
+    return f->invert ? !*f->enable : *f->enable;
+}
+
+/* Learned, not assumed: the type id the game itself uses for a bool dvar, taken
+ * from the return of a real Dvar_RegisterBool call. The per-frame override
+ * writes a BYTE at +0x18, which is only correct for a bool -- on an int or
+ * float dvar it would clobber the low byte of a live value. Rather than guess
+ * the enum, read it off a dvar the game has just told us is one. */
+static int g_bool_type = -1;
+
+/* Registration-time override. This runs for EVERY bool dvar the game
+ * registers, so the table lookup has to be cheap and everything not in the
+ * table has to pass through completely untouched. */
 static void *__cdecl my_regbool(const char *name, int value, unsigned int flags, const char *desc)
 {
-    if (name && value && lstrcmpA(name, "r_smp_backend") == 0) {
-        glog("smpoff: Dvar_RegisterBool(\"%s\", %d) -> forcing 0 at registration", name, value);
-        g_smp_registered = 1;
-        value = 0;
+    void *d;
+    int i;
+
+    /* The options must be readable HERE, not just from the first Present.
+     * Registration happens during engine init, long before any frame, so
+     * without this every entry would see its flag still at 0 -- and an opt-OUT
+     * entry like r_dof_enable would fire even when the user had explicitly
+     * asked for the game's own behaviour back. read_opts latches, so this costs
+     * one file check per option on the first bool dvar and nothing after. */
+    read_opts();
+
+    for (i = 0; name && i < N_FORCED; i++) {
+        dvar_force_t *f = &g_forced[i];
+        if (!forced_active(f) || lstrcmpA(name, f->name) != 0) continue;
+        if (value != f->want) {
+            glog("dvar: Dvar_RegisterBool(\"%s\", %d) -> forcing %d at registration (%s)",
+                 name, value, f->want, f->why);
+            value = f->want;
+        }
+        f->registered = 1;
+        break;
     }
-    return real_regbool(name, value, flags, desc);
+
+    d = real_regbool(name, value, flags, desc);
+
+    if (g_bool_type < 0 && d && mem_readable(d, 0x30)) {
+        g_bool_type = *(int *)((unsigned char *)d + DVAR_OFF_TYPE);
+        glog("dvar: bool type id is %d (learned from \"%s\")", g_bool_type, name ? name : "?");
+    }
+    return d;
 }
 
 static int mem_readable(const void *p, SIZE_T n)
@@ -1428,25 +1499,24 @@ static int mem_readable(const void *p, SIZE_T n)
     return (SIZE_T)((const char *)mbi.BaseAddress + mbi.RegionSize - (const char *)p) >= n;
 }
 
-static void smp_backend_off(void)
+static void dvar_force_one(dvar_force_t *f)
 {
-    static const char NAME[] = "r_smp_backend";
-    static int tries;
+    const char *NAME = f->name;
     unsigned char *base, *d;
     pfn_dvar_findvar find;
     const char *nm;
 
-    if (g_smp_state < 0) return;
+    if (f->state < 0) return;
 
-    if (!g_smp_dvar) {
+    if (!f->dvar) {
         /* The dvar may not be registered at our first Present. Retry, but give
          * up LOUDLY rather than silently doing nothing forever -- a switch that
          * quietly does nothing is how three earlier trials in this project were
          * wasted. */
-        if (++tries > 600) {
-            g_smp_state = -1;
-            glog("smpoff: \"%s\" never appeared in %d frames -- DISABLED, nothing was changed",
-                 NAME, tries);
+        if (++f->tries > 600) {
+            f->state = -1;
+            glog("dvar: \"%s\" never appeared in %d frames -- DISABLED, nothing was changed",
+                 NAME, f->tries);
             return;
         }
         base = (unsigned char *)GetModuleHandleA(NULL);
@@ -1456,28 +1526,50 @@ static void smp_backend_off(void)
         if (!d) return;                       /* not registered yet -- next frame */
 
         if (!mem_readable(d, 0x30)) {
-            g_smp_state = -1;
-            glog("smpoff: dvar at %p is not readable -- DISABLED, nothing was changed", (void *)d);
+            f->state = -1;
+            glog("dvar: \"%s\" at %p is not readable -- DISABLED, nothing was changed",
+                 NAME, (void *)d);
             return;
         }
         nm = *(const char **)d;               /* dvar_s.name at +0 */
-        if (!mem_readable(nm, sizeof(NAME)) || lstrcmpA(nm, NAME) != 0) {
-            g_smp_state = -1;
-            glog("smpoff: LAYOUT CHECK FAILED -- dvar %p name reads '%s', expected '%s'. Writing nothing.",
+        if (!mem_readable(nm, lstrlenA(NAME) + 1) || lstrcmpA(nm, NAME) != 0) {
+            f->state = -1;
+            glog("dvar: LAYOUT CHECK FAILED -- dvar %p name reads '%s', expected '%s'. Writing nothing.",
                  (void *)d, mem_readable(nm, 2) ? nm : "(unreadable)", NAME);
             return;
         }
 
-        g_smp_dvar = d;
-        g_smp_state = 1;
-        glog("smpoff: \"%s\" at %p type=%d flags=0x%08lx current=%d latched=%d -- forcing off",
+        /* AND IT MUST BE A BOOL. The write below is a single byte at +0x18; on
+         * an int or float dvar that would silently clobber the low byte of a
+         * live value instead of setting a flag. g_bool_type is read off a dvar
+         * the game itself registered through Dvar_RegisterBool, so this is the
+         * engine's own answer rather than a guessed enum. If the registration
+         * hook never ran we have no answer, and skipping the check would be
+         * exactly the kind of silent wrong write this file keeps paying for --
+         * so refuse instead. */
+        if (g_bool_type < 0) {
+            f->state = -1;
+            glog("dvar: \"%s\" found, but no bool type id was learned (Dvar_RegisterBool "
+                 "hook never ran) -- DISABLED rather than write a byte on faith", NAME);
+            return;
+        }
+        if (*(int *)(d + DVAR_OFF_TYPE) != g_bool_type) {
+            f->state = -1;
+            glog("dvar: \"%s\" is type %d, not bool (%d) -- DISABLED, nothing was changed",
+                 NAME, *(int *)(d + DVAR_OFF_TYPE), g_bool_type);
+            return;
+        }
+
+        f->dvar  = d;
+        f->state = 1;
+        glog("dvar: \"%s\" at %p type=%d flags=0x%08lx current=%d latched=%d -- forcing %d (%s)",
              NAME, (void *)d, *(int *)(d + DVAR_OFF_TYPE),
              *(unsigned long *)(d + DVAR_OFF_FLAGS),
              (int)*(unsigned char *)(d + DVAR_OFF_CURRENT),
-             (int)*(unsigned char *)(d + DVAR_OFF_LATCHED));
+             (int)*(unsigned char *)(d + DVAR_OFF_LATCHED), f->want, f->why);
     }
 
-    d = (unsigned char *)g_smp_dvar;
+    d = (unsigned char *)f->dvar;
     /* Frames where the value had come back as 1. This counts WRITE-BACKS by the
      * engine and nothing else -- it says nothing about whether the dvar is
      * READ, because reading does not modify. An earlier version of this comment
@@ -1490,10 +1582,18 @@ static void smp_backend_off(void)
      * branches to a Sys_IsMainThread path when clear. So it IS live, it IS read
      * per call, and 0x18 is confirmed as current.enabled by the game's own
      * code rather than only by our name check. */
-    if (*(unsigned char *)(d + DVAR_OFF_CURRENT)) g_smp_resets++;
-    *(unsigned char *)(d + DVAR_OFF_CURRENT)  = 0;
-    *(unsigned char *)(d + DVAR_OFF_LATCHED)  = 0;
+    if (*(unsigned char *)(d + DVAR_OFF_CURRENT) != (unsigned char)f->want) f->resets++;
+    *(unsigned char *)(d + DVAR_OFF_CURRENT)  = (unsigned char)f->want;
+    *(unsigned char *)(d + DVAR_OFF_LATCHED)  = (unsigned char)f->want;
     *(unsigned char *)(d + DVAR_OFF_MODIFIED) = 0;
+}
+
+static void dvars_force(void)
+{
+    int i;
+    for (i = 0; i < N_FORCED; i++)
+        if (forced_active(&g_forced[i]))
+            dvar_force_one(&g_forced[i]);
 }
 
 static void submit_eye(int i)
@@ -1926,7 +2026,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts, %ld waitlocks, smp %d/%ld",
              n, g_submitted, g_pose_ticks, g_flat_frames, g_skipped,
              g_gate_max_spins, g_gate_timeouts, g_waitlocks,
-             g_smp_state, g_smp_resets);
+             g_forced[0].state, g_forced[0].resets);
 }
 
 /* ------------------------------------------------------------------ hooks */
@@ -2024,7 +2124,7 @@ static HRESULT WINAPI my_sc_present(IDirect3DSwapChain9 *sc, const RECT *a, cons
 
     /* Before do_frame: if this lever works at all it has to be in force for the
      * frame the game is about to build, not the one it just finished. */
-    if (g_smpoff) smp_backend_off();
+    dvars_force();
 
     if (g_probe) probe_frame(sc);
     do_frame(sc);
@@ -2235,16 +2335,43 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
      * than being told to change its mind later.
      *
      * DllMain of an ASI runs before WinMain, so this hook is in place long
-     * before the dvar is registered. */
-    if (opt("smpoff.on")) {
+     * before the dvar is registered.
+     *
+     * INSTALLED UNCONDITIONALLY, which it did not used to be. Two reasons: the
+     * table now has an entry that is on by default (r_dof_enable), and the
+     * per-frame path REFUSES to write unless this hook has told it what type id
+     * the engine uses for a bool. Gating the hook would therefore disable the
+     * safety check as a side effect of disabling one experiment.
+     *
+     * BUT ONLY IN THE REAL GAME. Every address here is a BlackOps.exe VA.
+     * Unconditional was safe while smpoff.on gated it, because the bench never
+     * set that; now that the hook always wants to install, fakegame.exe would
+     * get a trampoline written over whatever lives at its base+0x5BB20. Check
+     * the host is who we think it is before writing to it. */
+    {
+        char hostpath[MAX_PATH], *hostname, *p;
         unsigned char *gb = (unsigned char *)GetModuleHandleA(NULL);
-        void *t = gb ? (void *)(gb + (VA_Dvar_RegisterBool - GAME_PREFERRED_BASE)) : NULL;
+        void *t;
+
+        if (!GetModuleFileNameA(NULL, hostpath, sizeof hostpath)) hostpath[0] = 0;
+        hostname = hostpath;
+        for (p = hostpath; *p; p++)          /* basename, without shlwapi */
+            if (*p == '\\' || *p == '/') hostname = p + 1;
+
+        if (lstrcmpiA(hostname, "BlackOps.exe") != 0) {
+            glog("dvar: host is '%s', not BlackOps.exe -- Dvar_RegisterBool NOT hooked "
+                 "(that address is a BlackOps VA and means nothing here)", hostname);
+            return TRUE;
+        }
+
+        t = gb ? (void *)(gb + (VA_Dvar_RegisterBool - GAME_PREFERRED_BASE)) : NULL;
         if (t && MH_CreateHook(t, (void *)my_regbool, (void **)&real_regbool) == MH_OK &&
             MH_EnableHook(t) == MH_OK)
-            glog("smpoff: Dvar_RegisterBool hooked at %p -- r_smp_backend will REGISTER as 0", t);
+            glog("dvar: Dvar_RegisterBool hooked at %p -- forced dvars REGISTER at their "
+                 "wanted value", t);
         else
-            glog("smpoff: FAILED to hook Dvar_RegisterBool at %p -- falling back to the "
-                 "per-frame override only", t);
+            glog("dvar: FAILED to hook Dvar_RegisterBool at %p -- the per-frame override "
+                 "cannot verify the bool type and will refuse to write", t);
     }
     return TRUE;
 }
