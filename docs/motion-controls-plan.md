@@ -35,7 +35,7 @@ the refdef for the render and restores it afterwards, so the game's own aim is
 untouched. That separation is precisely what motion control needs — it means
 aiming can be driven independently without fighting the view.
 
-## 2. The missing join, now located
+## 2. The missing join -- FIRST CANDIDATE REFUTED, see 8
 
 Aim in this engine accumulates into two floats, written by the mouse-look
 function `FUN_00881930`:
@@ -158,3 +158,53 @@ Fit the transform from that, then write it behind its own switch. The addresses
 are BSS values read out of a disassembly, so they are `VirtualQuery`-checked
 before every read: a wrong address that silently returned plausible-looking
 garbage would be far more expensive than one that faults.
+
+---
+
+## 8. REFUTED: `0x2911E20` / `0x2911E24` are not the view angles
+
+The dry run earned its keep on its first session. Sample rows:
+
+```
+aimlog: game pitch 0.00 yaw 70.46 | hand raw pitch -17.81 yaw -98.64 | hand recentred yaw 26.68 (yaw0 -125.33) | head yaw -0.10
+aimlog: game pitch 0.00 yaw  0.00 | hand raw pitch -30.40 yaw -42.13 | hand recentred yaw 83.20 (yaw0 -125.33) | head yaw 52.17
+aimlog: game pitch 0.00 yaw  0.00 | hand raw pitch  5.75 yaw -67.14 | hand recentred yaw 58.19 (yaw0 -125.33) | head yaw 45.12
+```
+
+Through nearly all of actual play both globals read **0.00**, while the head
+column swings across 100 degrees and the hand column across 60. A player
+demonstrably aiming in many directions while the claimed "view angles" sit at
+zero refutes the claim outright. They were non-zero only in the opening rows,
+before gameplay proper, and held steady there rather than tracking anything.
+
+So §2's identification was wrong. What `FUN_00881930` accumulates into them is a
+mouse-input quantity that is consumed and cleared, not the player's absolute
+orientation — consistent with them feeding `FUN_0051AE50`, which merely copies
+the pair into a per-client structure (stride `0xEB0`, base `0xBA68xx`) for
+`FUN_007576E0` to apply.
+
+**The cost of getting this wrong was one log line, because the dry run never
+wrote.** Had the transform been guessed and shipped, the symptom would have been
+a player who cannot aim, in a build that also changed three other things.
+
+## 9. The better source, which was already in hand
+
+`hk_body` receives the refdef **before** head tracking is composed in, and saves
+it in `save_axis` to restore afterwards. That saved forward row is the engine's
+own aim direction — where the weapon points — and it needs no reverse
+engineering, no BSS address and no memory-safety check, because the engine
+hands it to us every frame.
+
+It is now logged as `AIM pitch/yaw`, which does two jobs:
+
+* it says what the two globals really are, by comparison against a known-good
+  aim angle rather than another disassembly session;
+* **it is what #41 needs.** A crosshair that tells the truth must be drawn where
+  the weapon points, and that direction has been passing through our hook all
+  along.
+
+For #45 this also suggests a better shape than writing absolute angles: with the
+current aim known each frame and the desired (hand) direction known, the
+difference can be fed in as an input delta and let the engine's own clamping and
+smoothing do their work — steering the aim rather than overwriting it. That
+needs the input path (#46), but it fights the engine far less than a blind write.

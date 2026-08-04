@@ -666,6 +666,7 @@ static int  g_ht_applying = -1;         /* -1 unknown, 0 no, 1 yes            */
 static long g_ht_flips;
 static long g_views, g_views_oriented;
 static float g_last_game_pitch, g_last_head_yaw, g_last_head_pitch;
+static float g_aim_yaw, g_aim_pitch;   /* the game's own aim, pre-head-rotation */
 
 static void ht_note(int applying, const char *why)
 {
@@ -832,9 +833,10 @@ static void headtrack_sample(void)
                  * and a NaN here would poison the log rather than the game. */
                 float hpit = -asinf(f[2] > 1.0f ? 1.0f : (f[2] < -1.0f ? -1.0f : f[2]))
                              * 57.29578f;
-                camlog("aimlog: game pitch %.2f yaw %.2f | hand raw pitch %.2f yaw %.2f | "
-                       "hand recentred yaw %.2f (yaw0 %.2f) | head yaw %.2f",
-                       *gp, *gy, hpit, hyaw,
+                camlog("aimlog: AIM pitch %.2f yaw %.2f | globals %.2f %.2f | "
+                       "hand raw pitch %.2f yaw %.2f | hand recentred yaw %.2f "
+                       "(yaw0 %.2f) | head yaw %.2f",
+                       g_aim_pitch, g_aim_yaw, *gp, *gy, hpit, hyaw,
                        hyaw - g_yaw0 * 57.29578f, g_yaw0 * 57.29578f, g_last_head_yaw);
             }
         }
@@ -1142,6 +1144,25 @@ void __cdecl hk_body(void *out, void *in)
         float *org = (float *)(rd + RD_VIEWORG);
         memcpy(save_org, org, sizeof save_org);
         memcpy(save_axis, rd + RD_VIEWAXIS, sizeof save_axis);
+
+        /* THE GAME'S OWN AIM, CAPTURED BEFORE WE TOUCH IT.
+         *
+         * This is the refdef axis as the engine built it -- head tracking has
+         * not been composed in yet -- so its forward row IS where the weapon
+         * points. That makes it two things at once:
+         *
+         *   - ground truth for what the 0x2911E20/0x2911E24 globals actually
+         *     are. The first aim dry run found them reading 0.00 through most of
+         *     play, which refutes them being the view angles but does not say
+         *     what they ARE; comparing them against a known-good aim yaw settles
+         *     it without another disassembly session.
+         *   - exactly what #41 needs. A crosshair that tells the truth has to be
+         *     drawn where the WEAPON points, and that direction is right here,
+         *     already in hand, needing no further reverse engineering at all.
+         */
+        g_aim_yaw   = ht_yaw_of(save_axis) * 57.29578f;
+        g_aim_pitch = -asinf(save_axis[2] > 1.0f ? 1.0f :
+                            (save_axis[2] < -1.0f ? -1.0f : save_axis[2])) * 57.29578f;
         moved = 1;
 
         oriented = headtrack_apply(rd, (int)eye, &head_pos);
