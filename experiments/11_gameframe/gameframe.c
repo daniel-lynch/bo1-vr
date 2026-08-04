@@ -1781,17 +1781,34 @@ static int g_reticle_state;      /* 0 unknown, 1 live, -1 unavailable */
 static void spread_dryrun(void)
 {
     static long sn;
+    static float lo = 1e9f, hi = -1e9f;
     unsigned char *base, *cg;
-    const float *sc;
+    float v;
 
-    if ((sn++ % 300) != 0) return;
     base = (unsigned char *)GetModuleHandleA(NULL);
     if (!base) return;
     cg = *(unsigned char **)(base + (VA_CG_T - GAME_PREFERRED_BASE));
     if (!mem_readable(cg, CG_AIMSPREADSCALE + 4)) return;
-    sc = (const float *)(cg + CG_AIMSPREADSCALE);
-    glog("spread: cg=%p aimSpreadScale=%.3f (expect 0..255, rising when firing "
-         "or moving, falling when still or aiming)", (void *)cg, *sc);
+    v = *(const float *)(cg + CG_AIMSPREADSCALE);
+
+    /* SAMPLE EVERY FRAME, REPORT THE RANGE.
+     *
+     * The first version sampled once every 300 frames and caught a single
+     * non-zero reading (197.880) among sevens of zeros. That is consistent with
+     * a real spread value seen mostly at rest -- but it is equally consistent
+     * with reading garbage that happened to look plausible once, and one sample
+     * cannot tell those apart.
+     *
+     * Min and max over the whole window can: a real aimSpreadScale sweeps
+     * continuously between them as the player moves and fires, so a window that
+     * reports both a zero floor and a high ceiling is evidence no single
+     * snapshot provides. Cheap, too -- a float read per frame. */
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    if ((sn++ % 300) != 0) return;
+    glog("spread: cg=%p aimSpreadScale now %.2f, window min %.2f max %.2f "
+         "(real values sweep 0..255 with movement and fire)", (void *)cg, v, lo, hi);
+    lo = 1e9f; hi = -1e9f;
 }
 
 static void draw_aim_reticle(IDirect3DSurface9 *bb)

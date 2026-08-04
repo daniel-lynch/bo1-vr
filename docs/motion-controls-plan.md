@@ -208,3 +208,39 @@ current aim known each frame and the desired (hand) direction known, the
 difference can be fed in as an input delta and let the engine's own clamping and
 smoothing do their work — steering the aim rather than overwriting it. That
 needs the input path (#46), but it fights the engine far less than a blind write.
+
+---
+
+## 10. Second angle candidate also refuted — and we should stop looking
+
+`0x2911DA8` (from `docs/input-path-findings.md`, "the absolute view angles,
+written by `0x448BB0` from cgame") read **`0.00 0.00 0.00` for an entire
+session**, while the aim derived from the refdef axis showed real, changing
+values in the same log line:
+
+```
+aimlog: AIM pitch 1.30 yaw -88.12 | ABS angles 0.00 0.00 0.00
+```
+
+Either the address is wrong or it is indexed per local client in a way we did
+not account for. Not usable as written.
+
+**No third candidate is being tried.** Three attempts at the absolute angles
+have now cost three sessions, and the conclusion is that the goal was wrong
+rather than the addresses: `hk_body` is *handed* the engine's own aim axis every
+frame. That is strictly better than any global — no address to get wrong, no
+version to check, no memory-safety guard, and it cannot be zero when the game is
+running because the engine just used it to render.
+
+The same session confirms it works: `AIM pitch 1.30 yaw -88.12` is a real
+heading, and the reticle drawn from it landed at pixel 1287,854 of 2560x1440.
+
+And for motion controls the target has moved anyway. `docs/viewmodel-findings.md`
+found the weapon is already an attachment at `tag_weapon`, so driving that bone
+puts the gun in the tracked hand without writing any angle at all. Writing view
+angles was never going to be the shape of this.
+
+**Standing lesson for this file:** prefer a value the engine hands you over an
+address you went looking for. Two of the three confident identifications in this
+document were wrong, and both were addresses; nothing derived from the refdef
+has failed.
