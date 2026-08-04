@@ -56,6 +56,14 @@
  * so they ARE where the weapon points. Read-only so far; see the aim dry run. */
 #define VA_CL_PITCH       0x2911E20u
 #define VA_CL_YAW         0x2911E24u
+
+/* The ABSOLUTE view angles, per docs/input-path-findings.md: written by
+ * 0x448BB0 from cgame, and CL_FinishMove packs (viewangle + delta) * 182.044.
+ * That is the thing the first aim dry run went looking for and misidentified.
+ * Logged beside the aim we derive from the refdef axis -- which is ground truth,
+ * since the engine hands it to us -- so one session either confirms both or
+ * kills the claim. Not written, only read, until that has happened. */
+#define VA_CL_ANGLES      0x2911DA8u
 /* frontEndData pointer, and the bump-allocated view-parms counter inside it.
  * camera-hook-plan 5.1 names slot exhaustion the HIGHEST risk of rendering the
  * scene twice, and gives exactly this as the test. */
@@ -860,7 +868,14 @@ static void headtrack_sample(void)
                  * and a NaN here would poison the log rather than the game. */
                 float hpit = -asinf(f[2] > 1.0f ? 1.0f : (f[2] < -1.0f ? -1.0f : f[2]))
                              * 57.29578f;
-                camlog("aimlog: AIM pitch %.2f yaw %.2f | globals %.2f %.2f | "
+                {
+                const float *ga = (const float *)(g_base + (VA_CL_ANGLES - PREFERRED_BASE));
+                if (mem_readable_cam(ga, 12))
+                    camlog("aimlog: AIM pitch %.2f yaw %.2f | ABS angles %.2f %.2f %.2f "
+                           "<- these should match AIM if 0x2911DA8 is right",
+                           g_aim_pitch, g_aim_yaw, ga[0], ga[1], ga[2]);
+                }
+                camlog("aimlog: AIM pitch %.2f yaw %.2f | deltas %.2f %.2f | "
                        "hand raw pitch %.2f yaw %.2f | hand recentred yaw %.2f "
                        "(yaw0 %.2f) | head yaw %.2f",
                        g_aim_pitch, g_aim_yaw, *gp, *gy, hpit, hyaw,
