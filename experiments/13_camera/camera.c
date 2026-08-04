@@ -781,6 +781,43 @@ static void headtrack_sample(void)
     if (g_head_valid)
         memcpy(g_head_pos, hmd.cod_origin, sizeof g_head_pos);
 
+    /* CONTROLLERS: OBSERVED, NOT YET USED.
+     *
+     * exp 12 built the hand slots and verified their maths offline, but its
+     * RESULTS.md is explicit that NOTHING in it has ever been run against a
+     * headset -- the whole coordinate section is marked ASSUMED. Motion control
+     * is the next real feature and every part of it stands on these two poses
+     * being live and sane, so the cheapest useful thing this build can do is
+     * say whether they are, before anything is built on top.
+     *
+     * Logged rarely and only on CHANGE of validity, plus a slow heartbeat: a
+     * controller that goes to sleep on the desk and wakes when picked up is the
+     * normal case, and it is exactly what a once-only line would misreport. */
+    {
+        static int  known[2] = { -1, -1 };
+        static long hb;
+        static const char *hand[2] = { "left", "right" };
+        int s;
+        for (s = 0; s < 2; s++) {
+            poses_pose_t p;
+            int ok = poses_get(s == 0 ? POSES_HAND_LEFT : POSES_HAND_RIGHT, &p);
+            int beat = ok && (hb % 900) == 0;
+            if (ok != known[s] || beat) {
+                known[s] = ok;
+                if (!ok)
+                    camlog("controller %s: NO valid pose (off, asleep, or not tracked)",
+                           hand[s]);
+                else
+                    camlog("controller %s: pos %.1f %.1f %.1f  fwd %.3f %.3f %.3f  "
+                           "tracking_result=%d connected=%d",
+                           hand[s], p.cod_origin[0], p.cod_origin[1], p.cod_origin[2],
+                           p.cod_axis[0][0], p.cod_axis[0][1], p.cod_axis[0][2],
+                           (int)p.tracking_result, p.connected);
+            }
+        }
+        hb++;
+    }
+
     got = 0;
     for (e = 0; e < 2; e++) {
         if (!poses_get_eye(e, &ey))
