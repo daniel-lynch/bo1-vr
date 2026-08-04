@@ -34,8 +34,12 @@ RC=$?
 
 if [ "$VERBOSE" = 1 ]; then printf '%s\n' "$OUT"; exit $RC; fi
 
-# Strip Ghidra's log prefix and our own marker, keeping only script output.
-printf '%s\n' "$OUT" | sed -n 's/.*BO1DECOMP: \{0,1\}//p'
+# Strip Ghidra's log prefix, our own marker, and the trailing "(GhidraScript)"
+# that headless appends to every println -- without the last one the output is
+# not valid C and cannot be pasted anywhere useful.
+printf '%s\n' "$OUT" \
+  | sed -n 's/.*BO1DECOMP: \{0,1\}//p' \
+  | sed 's/[[:space:]]*(GhidraScript)[[:space:]]*$//'
 if ! printf '%s\n' "$OUT" | grep -q 'BO1DECOMP'; then
   echo "(no script output -- rerun with -v to see Ghidra's log)" >&2
   exit 1

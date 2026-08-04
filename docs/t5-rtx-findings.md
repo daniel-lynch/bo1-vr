@@ -91,6 +91,46 @@ can read `RESOLVED_SCENE` instead, we never issue that resolve. `R_SetRenderTarg
 (`0x726650`) and `R_SetRenderTargetSize` (`0x7265E0`) are the accessors, and
 `gfxCmdBufSourceState` / `gfxCmdBufState` are the globals they take.
 
+**Decompiled** (`tools/ghidra/decomp.sh 0x726650 0x726380`), which settles the
+shape of it:
+
+```c
+void R_SetRenderTarget(int source, int state, byte rt_index)
+{
+    if (2 < DAT_0460c124) {                       /* MSAA/quality clamp */
+        if      (rt_index < 3)  rt_index = 2;
+        else if (rt_index < 10) rt_index = 3;
+    }
+    if (rt_index != *(byte *)(state + 0x1128)) {          /* current RT index */
+        if (*(int *)(&DAT_045eb1e8 + rt_index * 0x14) != 0)
+            FUN_00726380(state, *(int *)(&DAT_045eb1e8 + rt_index * 0x14));
+        FUN_007249f0();
+        *(byte *)(state + 0x1128) = rt_index;
+        *(undefined4 *)(source + 0x1a34) = 0;
+        *(undefined1 *)(source + 0x1a88) = 1;             /* viewport dirty */
+    }
+}
+```
+
+So, all of it verified rather than assumed:
+
+* the third argument really is a **byte**, matching the signature;
+* there is a **render-target descriptor table at `0x45EB1E8`, stride `0x14`**,
+  so `RESOLVED_SCENE` (6) is the entry at `0x45EB1E8 + 6*0x14 = 0x45EB250`.
+  It lives above `.data` (which ends at `0xBA6400`), i.e. in BSS, so it is
+  populated at runtime and cannot be read out of the file;
+* `GfxCmdBufState + 0x1128` is the currently bound RT index — readable at any
+  time to find out what the game is drawing into;
+* `0x726380` unbinds the target from any texture slot first: it walks
+  `state + 0x50` for `DAT_03966178` entries and calls vtable `+0x104` on the
+  `IDirect3DDevice9*` at `state + 0x90`. Offset `0x104` is slot 65,
+  `IDirect3DDevice9::SetTexture` — so **`GfxCmdBufState + 0x90` is the D3D9
+  device**, and `+0x50` is the texture-slot array.
+
+That last point is the useful one for #37: it gives a supported, in-engine way
+to reach the resolved surface and the exact hazard the engine itself takes care
+of before rebinding, which is the thing our own `StretchRect` does not do.
+
 ### 3. A second hook site where `viewParms` is live — for #30
 
 Their scene hook is at **`0x6C8DF1`**, with the original instruction
