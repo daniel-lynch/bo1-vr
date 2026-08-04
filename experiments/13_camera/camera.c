@@ -1018,8 +1018,16 @@ void __cdecl hk_body(void *out, void *in)
      * stuck alternation. It was aliasing: RESULTS.md §6 MEASURED two
      * R_SetViewParms calls per frame (two view slots, different `out`
      * pointers), so every multiple of 900 landed on the same frame parity. A
-     * run of consecutive calls shows the real pattern and cannot alias. */
-    if ((n >= 1000 && n < 1012) || n <= 2) {
+     * run of consecutive calls shows the real pattern and cannot alias.
+     *
+     * AND KEEP SAMPLING, every 3600 calls. The window used to be 1000-1011 and
+     * nothing afterwards, which put every sample in the first few seconds --
+     * i.e. in the MAIN MENU, whose background is two static cameras. Two
+     * playtest reports were analysed off menu frames before that became
+     * obvious: the origins never moved between samples, and both reports were
+     * about gameplay. Four consecutive calls every 3600 keeps the run-length
+     * that defeats aliasing while actually observing what is complained about. */
+    if ((n >= 1000 && n < 1012) || n <= 2 || (n % 3600) < 4) {
         const unsigned char *rd = (const unsigned char *)in;
         const float *org  = (const float *)(rd + RD_VIEWORG);
         const float *axis = (const float *)(rd + RD_VIEWAXIS);
@@ -1082,7 +1090,7 @@ void __cdecl hk_body(void *out, void *in)
      * agreement here means the refdef offsets, the GfxViewParms offsets and the
      * EDI/ESI convention are ALL correct -- none of the three could look right
      * on its own if another were wrong. */
-    if ((n >= 1000 && n < 1012) || n <= 2) {
+    if ((n >= 1000 && n < 1012) || n <= 2 || (n % 3600) < 4) {
         const unsigned char *vp = (const unsigned char *)out;
         const float *vorg = (const float *)(vp + VP_ORIGIN);
         const float *rorg = (const float *)((const unsigned char *)in + RD_VIEWORG);
@@ -1228,7 +1236,34 @@ static void __cdecl hk_R_RenderScene(void *refdef)
         }
         bo1vr_camera_set_eye(CAM_EYE_CENTRE);
         o_R_RenderScene(refdef);
-        bo1vr_camera_set_eye(CAM_EYE_NONE);
+        /* AND IT IS DELIBERATELY LEFT SET -- do not "fix" this to CAM_EYE_NONE.
+         *
+         * MEASURED: R_SetViewParms (0x6C7F80) has five call sites --
+         * 0x6C8C5F, 0x6C8D96, 0x6C8E73, 0x6C8F5B, 0x6CEF64 -- and only the
+         * FIRST is inside the R_RenderScene we hook. Ghidra shows even that one
+         * is conditional:
+         *
+         *     if (*(char *)(DAT_03b1fd24 + 0x14) != '\0') { ...; R_SetViewParms(); }
+         *
+         * The views that actually reach the screen come through
+         * R_RenderSceneInternal (0x6C8CD0) at 0x6C8D96, which this hook does
+         * not wrap at all. So bracketing o_R_RenderScene sets the eye across a
+         * window that usually contains NO R_SetViewParms call, and the log
+         * showed exactly that: every sampled call read eye=-1.
+         *
+         * That also explains why head tracking appeared to work before and
+         * stopped when the alternate-eye fallback was removed. It was never the
+         * bracket doing it -- gameframe.asi set the eye at Present and left it
+         * set, so it happened to still be set when the real scene view was
+         * built. The alternation is what made it pulse; the persistence is what
+         * made it work at all. Keep the persistence, drop the alternation.
+         *
+         * Leaving CENTRE set means all five sites get the head basis and the
+         * headset FOV, not just the scene. That is the same breadth the old
+         * fallback already had, so it is no worse -- and hk_body restores the
+         * refdef after every call, so nothing leaks into the game's own state.
+         * Narrowing it to the scene view wants a hook on 0x6C8CD0, which is the
+         * proper fix and a bigger change than a playtest should carry. */
         return;
     }
 

@@ -1030,3 +1030,53 @@ Result is mono, which is the honest shape for a configuration that cannot
 capture per-eye. Stereo comes back with #32, not before. **This is a code fix
 verified only by build and by reading the traces; the playtest that confirms it
 has not run yet.**
+
+### 16.1 The mono fix was right and still did nothing — the eye bracket wraps the wrong function
+
+Second playtest with §16 installed: pulsing gone (the `eye` column is pinned and
+`wait_poses_ms` is back to a compositor-paced 8.9-9.3 ms of an 11.1 ms frame),
+but head tracking was now *completely* dead and the zoom barely moved.
+
+The new log says why: **every sampled `R_SetViewParms` call read `eye=-1`.** Not
+one carried `CAM_EYE_CENTRE`, so `hk_body` never ran, so neither the head basis
+nor the headset FOV was ever written.
+
+`objdump` names five call sites for `R_SetViewParms` (`0x6C7F80`):
+
+| site | in |
+|---|---|
+| `0x6C8C5F` | `R_RenderScene` `0x6C8C40` — the one we hook, and **conditional** |
+| `0x6C8D96` | `R_RenderSceneInternal` `0x6C8CD0` — the scene view |
+| `0x6C8E73` | `R_RenderSceneInternal` |
+| `0x6C8F5B` | `R_RenderSceneInternal` |
+| `0x6CEF64` | elsewhere |
+
+and Ghidra shows the one site we do wrap is gated:
+
+```c
+void R_RenderScene(int refdef) {
+    if (*(char *)(DAT_03b1fd24 + 0x14) != '\0') { FUN_004682d0(...); R_SetViewParms(); }
+    ...
+}
+```
+
+`R_RenderScene` (`0x6C8C40`) never calls `R_RenderSceneInternal` (`0x6C8CD0`) —
+they are separate functions with separate callers. So bracketing
+`o_R_RenderScene` sets the eye across a window that usually contains no
+`R_SetViewParms` call at all.
+
+**Which means the bracket was never what made head tracking work.** The
+alternate-eye fallback set the eye at Present and *left it set*, so it was still
+set when the real scene view was built later in the frame. §16 removed that
+fallback and with it the only thing that was actually delivering the pose. The
+alternation was the pulse; the persistence was the mechanism.
+
+Fix: in mono mode set `CAM_EYE_CENTRE` and leave it set. Same breadth the old
+fallback already had, minus the alternation, plus the correct FOV.
+
+**A second lesson, about the instrument.** The call dump sampled calls 1000-1011
+and then went silent forever, which put every sample in the first seconds of the
+process — the main menu, whose background is two static cameras (origins
+`243.500 478.300 105.800` and `52.033 457.121 51.783`, unchanged across every
+sample in three separate runs). Two playtest reports about *gameplay* were
+analysed off *menu* frames. Now sampling four consecutive calls every 3600.
