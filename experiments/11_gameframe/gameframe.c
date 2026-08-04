@@ -156,6 +156,7 @@ static int g_smpoff;                /* smpoff.on: force r_smp_backend to 0 */
 static int g_dof;                   /* dof.on: KEEP the game's depth of field */
 static int g_xhair3d;               /* xhair3d.on: hide the flat 2D crosshair       */
 static int g_noreticle;             /* noreticle.on: do not draw the VR reticle     */
+static int g_noarms;                /* noarms.on: hide the viewmodel arms, keep gun */
 static int g_nowaitlock;            /* nowaitlock.on: restore the racy order */
 static LONG g_waitlocks;            /* proof the lock around WaitGetPoses ran */
 static volatile LONG g_gd_calls;
@@ -1188,10 +1189,11 @@ static void read_opts(void)
     g_dof      = opt("dof.on");
     g_xhair3d  = opt("xhair3d.on");
     g_noreticle = opt("noreticle.on");
+    g_noarms    = opt("noarms.on");
     glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d smpoff=%d",
          g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock, g_smpoff);
     glog("BISECT: dof=%d (dof.on KEEPS the game's depth of field; default is to force it off) "
-         "xhair3d=%d noreticle=%d", g_dof, g_xhair3d, g_noreticle);
+         "xhair3d=%d noreticle=%d noarms=%d", g_dof, g_xhair3d, g_noreticle, g_noarms);
 }
 
 /* ------------------------------------------------- per-frame timing capture
@@ -1614,6 +1616,287 @@ static void dvars_force(void)
     for (i = 0; i < N_FORCED; i++)
         if (forced_active(&g_forced[i]))
             dvar_force_one(&g_forced[i]);
+}
+
+/* ------------------------------------------- noarms: the arms off, the gun on
+ *
+ * docs/viewmodel-findings.md: the first-person viewmodel is ONE DObj built from
+ * a LIST of XModels -- model 0 the viewhands (the root, which owns the skeleton
+ * and the tag_weapon bone), model 1 the weapon hanging off that tag. Dropping
+ * model 0 is not an option, because the gun would lose its parent bone; but the
+ * renderer already has a per-BONE kill switch we can borrow.
+ *
+ * R_GenerateDObjSurfaces (0x6C9AE0) skips any surface whose bone-usage mask
+ * touches a bone set in the DObj's 160-bit hide-part-bits at dobj+0x5C, and
+ * bone indices are flat and concatenated across the model list -- so model 0
+ * owns [0, numBones(model0)) and setting exactly those bits drops the arms'
+ * surfaces and nothing else. That is the same mechanism the game itself uses
+ * for a weapon file's hideTags.
+ *
+ * NOT cg_drawGun (0x2F67F28): it gates the whole R_AddDObjToScene call and
+ * takes the gun with it. That was checked and rejected in the survey.
+ *
+ * WHY HOOK THE SETTER rather than write the bits per frame: 0x00796A50 rebuilds
+ * the viewmodel DObj on every weapon change, camo change, viewhands change and
+ * akimbo toggle, and each rebuild ends by calling DObjSetHidePartBits, which
+ * copies cg_viewModelArray[lc].partBits wholesale over dobj+0x5C. Bits written
+ * anywhere else are erased there. ORing ours in immediately after the engine's
+ * own write means every rebuild re-applies them, at the exact instant the
+ * engine considers them settled, with no per-frame cost at all.
+ *
+ * We deliberately do NOT touch cg_viewModelArray[lc].partBits itself, only the
+ * DObj copy: the engine zeroes that array and rebuilds it from the weapon's
+ * hideTags each time (pxor/movq at 0x796D7A), so writing there would be both
+ * futile and a scribble on live engine state.
+ *
+ * VERIFIED IN OUR OWN BINARY, not taken from the survey:
+ *   0x5AE010  mov ecx,[esp+8] / mov eax,[esp+4] / movq [eax+0x5C],... x2 +
+ *             mov [eax+0x6C],ecx / ret
+ *             => __cdecl DObjSetHidePartBits(DObj *dobj, const u32 bits[5]),
+ *                caller-cleaned, 20 bytes copied to dobj+0x5C.  8 bytes of
+ *                instructions before the first branch, so MinHook's 5-byte
+ *                patch relocates cleanly.
+ *   0x796DEA  push edi (=viewModel+0x10) / push edx (=viewModel->dobj) / call
+ *             0x5AE010  -- the viewmodel's own call, argument order confirmed.
+ *   0x5B0D44  mov edx,0x80000000 / shr edx,cl / or [ebp+edx*4+0x10],edx
+ *             => the bit order is MSB-FIRST: bone b is 0x80000000 >> (b & 31)
+ *                of word b >> 5.  Getting this backwards would hide the GUN.
+ *   0x648670  DObjGetModel: bounds-checks i against *(u8*)(dobj+9), returns
+ *             ((XModel**)*(u32*)(dobj+0x78))[i].
+ *   0x415910  XModelNumBones: *(u8*)(model+4).
+ *   0x5E0F40  DObjGetName: models[0]->name -- which proves XModel+0x00 is a
+ *             printable char*, the fact the diagnostic below depends on.
+ *   0x5F8A90  compares a flat bone index against *(u8*)(dobj+0x0A) and then
+ *             walks the models subtracting numBones => +0x0A is the TOTAL bone
+ *             count. Used below as an independent check on our layout.
+ *
+ * ONE CORRECTION TO THE SURVEY. It gives the viewmodel DObj as
+ * `*(DObj**)0xC1C6D8`. That is one dereference short: 0x64F79D does
+ * `imul ecx,ebx,0x34 ; add ecx,[0xC1C6D8]` and 0x50B791 does
+ * `mov ebx,[0xC1C6D8] ; cmp [ebx],eax`, so 0xC1C6D8 holds a POINTER to the
+ * cg_viewModelArray (stride 0x34) and the DObj is **(DObj***)0xC1C6D8.
+ * Following the survey literally would have compared against the array base
+ * and never matched anything.
+ *
+ * AND THE PART THAT IS STILL UNPROVEN. The survey's own caveat is that "DObj
+ * model 0 is always the arms" has not been demonstrated at runtime. If it is
+ * wrong we would hide the weapon and leave the arms, which is a conspicuous
+ * failure but a mystifying one if the log says nothing. So the diagnostic below
+ * is not optional: whenever the feature is on it dumps every model's name and
+ * bone count, and if model 0 does not look like a hands model it REFUSES and
+ * says so. A feature that quietly does the wrong thing has cost this project
+ * several playtests already. */
+#define VA_DObjSetHidePartBits 0x5AE010u
+#define VA_cg_viewModelArray   0xC1C6D8u
+#define DOBJ_OFF_NUMMODELS     0x09
+#define DOBJ_OFF_TOTALBONES    0x0A
+#define DOBJ_OFF_HIDEBITS      0x5C
+#define DOBJ_OFF_MODELS        0x78
+#define XMODEL_OFF_NUMBONES    0x04
+#define HIDEBITS_CEILING       160      /* 5 dwords at dobj+0x5C, and no more */
+
+typedef void (__cdecl *pfn_dobj_sethidepartbits)(void *dobj, const unsigned int *bits);
+static pfn_dobj_sethidepartbits real_sethidepartbits;
+
+static int  g_noarms_state;         /* 0 nothing yet, 1 applied, -1 gave up */
+static LONG g_noarms_calls;         /* every DObj that passes through the hook */
+static LONG g_noarms_applies;
+static int  g_noarms_nomatch_logged;
+/* Signature of the last viewmodel DObj we reported, so a REBUILD dumps its
+ * model list exactly once and any repeat call for the same rig stays quiet.
+ * The bits are re-applied on every call regardless -- only the logging is
+ * gated, because the engine's write above us wipes them every time. */
+static void *g_noarms_sig_dobj;
+static int   g_noarms_sig_models, g_noarms_sig_bones;
+
+/* A name we are willing to print AND to make a decision on. An XModel* that is
+ * not what we think it is would otherwise put arbitrary bytes in the log and,
+ * worse, let a garbage substring match decide whether to hide something. */
+static int noarms_name_ok(const char *s)
+{
+    int i;
+    for (i = 0; i < 64; i++) {
+        if (!mem_readable(s + i, 1)) return 0;
+        if (s[i] == 0) return i > 0;
+        if (s[i] < 0x20 || s[i] > 0x7E) return 0;
+    }
+    return 0;                       /* no terminator in 64 chars: not a name */
+}
+
+/* ASCII case-insensitive substring. No CRT: this file avoids it on the game's
+ * threads on principle, and strcasestr is not in mingw's msvcrt anyway. */
+static int noarms_has(const char *hay, const char *needle)
+{
+    int i, j;
+    for (i = 0; hay[i]; i++) {
+        for (j = 0; needle[j]; j++) {
+            char a = hay[i + j], b = needle[j];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) break;
+        }
+        if (!needle[j]) return 1;
+    }
+    return 0;
+}
+
+/* The address of the cg_viewModelArray POINTER, resolved once. This runs for
+ * every DObj the game builds -- thousands over a level load -- so the per-call
+ * work is kept to a load and a compare. */
+static unsigned char **g_noarms_vmslot;
+
+static void noarms_apply(void *dobj)
+{
+    unsigned char *base, *vmarr, *d = (unsigned char *)dobj;
+    unsigned char **models;
+    unsigned int *bits;
+    const char *name0 = NULL;
+    int nmodels, i, total = 0, n0 = 0, b, set = 0, newsig;
+
+    if (!g_noarms || g_noarms_state < 0 || !d) return;
+
+    /* WHICH DObj IS THIS? The hook is generic -- fourteen call sites, nearly all
+     * of them world entities -- so everything that is not the viewmodel has to
+     * be dropped here, and dropped SILENTLY or the log would be useless.
+     *
+     * Local client 0 only. cg_viewModelArray has a 0x34-byte entry per local
+     * client, but this is the single-player campaign; splitscreen would want a
+     * loop, and would want a lot else besides. */
+    if (!g_noarms_vmslot) {
+        base = (unsigned char *)GetModuleHandleA(NULL);
+        if (!base) return;
+        g_noarms_vmslot = (unsigned char **)(base + (VA_cg_viewModelArray - GAME_PREFERRED_BASE));
+    }
+    vmarr = *g_noarms_vmslot;
+    if (!mem_readable(vmarr, 0x34)) return;
+    if (*(unsigned char **)vmarr != d) {
+        /* Not the viewmodel. Count it, and if we NEVER see the viewmodel say so
+         * once -- an identification that silently matches nothing is exactly the
+         * failure mode this file keeps paying for. A few hundred DObjs is a
+         * normal level load, so by then the answer is in. */
+        if (++g_noarms_calls == 200 && !g_noarms_applies && !g_noarms_nomatch_logged) {
+            g_noarms_nomatch_logged = 1;
+            glog("noarms: 200 DObjs through the hook and NONE was the viewmodel "
+                 "(cg_viewModelArray=%p, its dobj=%p) -- NOTHING HAS BEEN HIDDEN. "
+                 "The identification at 0x%X is wrong or no weapon exists yet.",
+                 (void *)vmarr, (void *)*(unsigned char **)vmarr, VA_cg_viewModelArray);
+        }
+        return;
+    }
+    g_noarms_calls++;
+
+    /* Everything from here on is the viewmodel, so it is worth being loud. */
+    if (!mem_readable(d, DOBJ_OFF_MODELS + 4)) {
+        g_noarms_state = -1;
+        glog("noarms: viewmodel DObj %p is not readable to +0x%X -- DISABLED, "
+             "nothing was changed", (void *)d, DOBJ_OFF_MODELS + 4);
+        return;
+    }
+
+    nmodels = (int)*(unsigned char *)(d + DOBJ_OFF_NUMMODELS);
+    models  = *(unsigned char ***)(d + DOBJ_OFF_MODELS);
+
+    newsig = (d != g_noarms_sig_dobj || nmodels != g_noarms_sig_models ||
+              (int)*(unsigned char *)(d + DOBJ_OFF_TOTALBONES) != g_noarms_sig_bones);
+    g_noarms_sig_dobj   = d;
+    g_noarms_sig_models = nmodels;
+    g_noarms_sig_bones  = (int)*(unsigned char *)(d + DOBJ_OFF_TOTALBONES);
+
+    if (nmodels < 2 || nmodels > 32 || !mem_readable(models, (SIZE_T)nmodels * 4)) {
+        if (newsig)
+            glog("noarms: viewmodel DObj %p claims %d models (list %p) -- REFUSING. "
+                 "A viewmodel is always at least hands+weapon, so this is not the "
+                 "rig we think it is and nothing was hidden.",
+                 (void *)d, nmodels, (void *)models);
+        return;
+    }
+
+    if (newsig)
+        glog("noarms: viewmodel DObj %p rebuilt -- %d models, totalBones(+0x0A)=%d",
+             (void *)d, nmodels, g_noarms_sig_bones);
+
+    for (i = 0; i < nmodels; i++) {
+        unsigned char *m = models[i];
+        const char *nm;
+        int nb;
+
+        if (!mem_readable(m, XMODEL_OFF_NUMBONES + 1)) {
+            if (newsig)
+                glog("noarms: model %d of the viewmodel DObj is %p, unreadable -- "
+                     "REFUSING, nothing was hidden", i, (void *)m);
+            return;
+        }
+        nm = *(const char **)m;                 /* XModel+0x00, proven by 0x5E0F40 */
+        nb = (int)*(unsigned char *)(m + XMODEL_OFF_NUMBONES);
+        if (newsig)
+            glog("noarms:   model %d '%s' numBones %d -> flat bones %d..%d",
+                 i, noarms_name_ok(nm) ? nm : "(unreadable)", nb, total, total + nb - 1);
+        if (i == 0) { name0 = nm; n0 = nb; }
+        total += nb;
+    }
+
+    /* SECOND OPINION ON THE LAYOUT. dobj+0x0A is the engine's own total bone
+     * count (0x5F8A90 bounds-checks flat bone indices against it). If our walk
+     * of the model list does not reproduce it, one of numModels, the model
+     * array pointer or numBones is not where we think it is -- and in that case
+     * writing 20 bytes at dobj+0x5C is a scribble on a struct we do not
+     * understand. Refuse. */
+    if (total != g_noarms_sig_bones) {
+        g_noarms_state = -1;
+        if (newsig)
+            glog("noarms: LAYOUT CHECK FAILED -- the model list sums to %d bones but "
+                 "dobj+0x0A says %d. DISABLED, nothing was written.",
+                 total, g_noarms_sig_bones);
+        return;
+    }
+
+    /* IS MODEL 0 ACTUALLY THE ARMS? The survey never proved it, and a wrong
+     * answer here hides the WEAPON. Accept only a name that reads like a hands
+     * asset (BO1's are viewhands_*). A false negative costs the feature and
+     * says why; a false positive would cost the gun. */
+    if (!noarms_name_ok(name0)) {
+        g_noarms_state = -1;
+        glog("noarms: model 0 of the viewmodel has no readable name (%p) -- REFUSING. "
+             "Without it we cannot tell the arms from the weapon, and guessing wrong "
+             "hides the gun. DISABLED.", (const void *)name0);
+        return;
+    }
+    if (!noarms_has(name0, "hand") && !noarms_has(name0, "arm")) {
+        g_noarms_state = -1;
+        glog("noarms: model 0 is '%s', which does NOT look like a viewhands model. "
+             "THE SURVEY'S ASSUMPTION IS WRONG FOR THIS RIG -- refusing to hide it, "
+             "because hiding the wrong model removes the weapon. DISABLED; the model "
+             "list above says which index is really the arms.", name0);
+        return;
+    }
+    if (n0 <= 0 || n0 > HIDEBITS_CEILING) {
+        g_noarms_state = -1;
+        glog("noarms: model 0 '%s' has %d bones; hidePartBits holds %d (5 dwords at "
+             "dobj+0x5C). REFUSING -- a partial mask would hide part of the arms and "
+             "leave the rest. DISABLED.", name0, n0, HIDEBITS_CEILING);
+        return;
+    }
+
+    /* MSB-first, exactly as CG_SetWeaponHidePartBits does it at 0x5B0D44. */
+    bits = (unsigned int *)(d + DOBJ_OFF_HIDEBITS);
+    for (b = 0; b < n0; b++) {
+        bits[b >> 5] |= 0x80000000u >> (b & 31);
+        set++;
+    }
+    g_noarms_applies++;
+    g_noarms_state = 1;
+    if (newsig)
+        glog("noarms: hid %d bones of model 0 '%s' (bits 0..%d of 160); models 1..%d "
+             "keep their %d bones and stay visible. apply #%ld",
+             set, name0, n0 - 1, nmodels - 1, total - n0, g_noarms_applies);
+}
+
+static void __cdecl my_sethidepartbits(void *dobj, const unsigned int *bits)
+{
+    /* The engine's write FIRST -- it copies five dwords over dobj+0x5C, so
+     * anything we set before it would be erased. We OR on top of the result. */
+    real_sethidepartbits(dobj, bits);
+    noarms_apply(dobj);
 }
 
 static void submit_eye(int i)
@@ -2554,6 +2837,12 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
         unsigned char *gb = (unsigned char *)GetModuleHandleA(NULL);
         void *t;
 
+        /* The switch files must be readable HERE: the noarms hook below is only
+         * installed when noarms.on exists, and DllMain runs long before the
+         * first Present that would otherwise latch them. read_opts latches, so
+         * this costs one file check per option, once. */
+        read_opts();
+
         if (!GetModuleFileNameA(NULL, hostpath, sizeof hostpath)) hostpath[0] = 0;
         hostname = hostpath;
         for (p = hostpath; *p; p++)          /* basename, without shlwapi */
@@ -2573,6 +2862,32 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
         else
             glog("dvar: FAILED to hook Dvar_RegisterBool at %p -- the per-frame override "
                  "cannot verify the bool type and will refuse to write", t);
+
+        /* HIDE THE ARMS, KEEP THE GUN -- and only when asked.
+         *
+         * OFF BY DEFAULT, and off means the trampoline is never written at all:
+         * this is a live mod someone is playing with, so a feature nobody
+         * enabled must cost exactly zero instructions on the game's paths. The
+         * same reason the switch is a FILE and not a rebuild.
+         *
+         * DllMain runs before WinMain, so this is in place long before the
+         * first viewmodel DObj is built and no rebuild can slip past it. */
+        if (g_noarms) {
+            void *h = gb ? (void *)(gb + (VA_DObjSetHidePartBits - GAME_PREFERRED_BASE)) : NULL;
+            if (h && MH_CreateHook(h, (void *)my_sethidepartbits,
+                                   (void **)&real_sethidepartbits) == MH_OK &&
+                MH_EnableHook(h) == MH_OK) {
+                glog("noarms: DObjSetHidePartBits hooked at %p -- the viewmodel's model 0 "
+                     "will be hidden on every DObj rebuild", h);
+            } else {
+                /* LOUD. noarms.on is present, so the player is expecting no
+                 * arms; if they still have arms the log has to be the thing
+                 * that says why, not a guess. */
+                g_noarms_state = -1;
+                glog("noarms: FAILED to hook DObjSetHidePartBits at %p -- noarms.on is "
+                     "present but THE ARMS WILL STILL BE DRAWN. Nothing else was changed.", h);
+            }
+        }
     }
     return TRUE;
 }

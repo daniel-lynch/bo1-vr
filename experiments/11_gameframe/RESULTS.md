@@ -1306,3 +1306,102 @@ useless without it, and it has not been located. Two routes:
 Route 2 is preferable on those grounds, and it also subsumes `xhair3d.on`:
 suppressing at the draw is more precise than suppressing via the dvar. It costs
 finding one function.
+
+## 20. `noarms.on` — the arms off, the gun on
+
+`docs/viewmodel-findings.md` established the mechanism; this is it wired up,
+behind an **off-by-default** switch file `noarms.on` in `C:\bo1vr`. Without that
+file nothing is hooked at all — not a disabled hook, no trampoline written — so
+the shipped default is byte-for-byte the previous behaviour.
+
+**The lever.** The viewmodel is one DObj built from a list of XModels: model 0
+the viewhands (the root, which owns the skeleton and the `tag_weapon` bone that
+the gun hangs off), model 1 the weapon. Model 0 cannot be dropped without
+orphaning the gun, but `R_GenerateDObjSurfaces` (`0x6C9AE0`) already skips any
+surface whose bone-usage mask touches a bone set in the DObj's 160-bit
+hide-part-bits at `dobj+0x5C`, and bone indices are flat and concatenated across
+the model list — so model 0 owns `[0, numBones(model0))` and setting exactly
+those bits drops the arms' surfaces and nothing else. It is the same mechanism
+the game uses for a weapon file's `hideTags`. **Not** `cg_drawGun`: that gates
+the whole `R_AddDObjToScene` and takes the gun with it.
+
+**Hooked at the setter, not applied per frame.** `CG_SetupViewWeaponDObj`
+(`0x796A50`) rebuilds the DObj on every weapon change, camo change, viewhands
+change and akimbo toggle, and each rebuild ends by calling
+`DObjSetHidePartBits`, which copies `cg_viewModelArray[lc].partBits` wholesale
+over `dobj+0x5C`. Bits written anywhere else are erased there. ORing ours in
+immediately after the engine's own write means every rebuild re-applies them at
+the instant the engine considers them settled, with no per-frame cost. We do not
+touch `partBits` itself — the engine zeroes it and rebuilds it from the weapon's
+hideTags each time (`pxor`/`movq` at `0x796D7A`), so writing there would be both
+futile and a scribble on live state.
+
+**Read out of our own binary, not taken from the survey:**
+
+| VA | What the bytes say |
+|---|---|
+| `0x5AE010` | `mov ecx,[esp+8]` / `mov eax,[esp+4]` / 20 bytes to `[eax+0x5C]` / `ret` → `__cdecl DObjSetHidePartBits(DObj*, const u32[5])`, caller-cleaned. 8 bytes of instructions before the first branch, so MinHook's 5-byte patch relocates cleanly. |
+| `0x796DEA` | `push edi` (`viewModel+0x10`) / `push edx` (`viewModel->dobj`) / `call 0x5AE010` — argument order confirmed |
+| `0x796CA1` | `mov [esi],eax` right after `DObjCreate` — `viewModel->dobj` is already the new DObj when the setter is called, so our identity check matches on the first call |
+| `0x5B0D44` | `mov edx,0x80000000` / `shr edx,cl` / `or [ebp+edx*4+0x10],edx` — **MSB-first**. Backwards would hide the gun |
+| `0x648670` | `DObjGetModel`: bounds-checks `i` against `*(u8*)(dobj+9)`, returns `((XModel**)*(u32*)(dobj+0x78))[i]` |
+| `0x415910` | `XModelNumBones` = `*(u8*)(model+4)` |
+| `0x5E0F40` | `DObjGetName` = `models[0]->name` — proves **XModel+0x00 is a printable `char*`**, which the diagnostic depends on |
+| `0x5F8A90` | compares a flat bone index against `*(u8*)(dobj+0x0A)`, then walks the models subtracting `numBones` → `+0x0A` is the **total** bone count |
+| `0x875D7A` | `cmp ebx,0xa0` guarding `"ERROR: xmodel '%s' has more than %d bones"` (%d = 159) — the 160-bit ceiling is the engine's own limit, corroborated at asset load |
+
+### A correction to the survey
+
+`docs/viewmodel-findings.md` §6 gives the viewmodel DObj as `*(DObj**)0xC1C6D8`.
+**That is one dereference short.** `0x64F79D` does `imul ecx,ebx,0x34 ; add
+ecx,[0xC1C6D8]` and `0x50B791` does `mov ebx,[0xC1C6D8] ; cmp [ebx],eax`, so
+`0xC1C6D8` holds a *pointer* to `cg_viewModelArray` (stride `0x34`, `+0x00` =
+`DObj*`, `+0x10` = `partBits`) and the DObj is `**(DObj***)0xC1C6D8`. Following
+the survey literally would have compared against the array base, matched
+nothing, and hidden nothing — silently, which is the worst available outcome.
+The rest of §5–§6 held up exactly as written.
+
+### The diagnostic, because "model 0 is the arms" is still unproven
+
+The survey's own caveat is that nothing has demonstrated model 0 is the
+viewhands. A wrong guess hides the **weapon**, which is conspicuous on screen and
+mystifying in a silent log. So whenever the feature is on it dumps, once per DObj
+rebuild, every model's index, name and `numBones` with its flat bone range, the
+total, and how many bits were set — and it **refuses** rather than guess:
+
+* model 0's name unreadable, or does not contain `hand`/`arm` → refuse, log which
+  index really is the arms so the next attempt is one edit;
+* `numModels < 2` → refuse (a viewmodel is always at least hands + weapon, so
+  this is not the rig we think it is);
+* the model list's bone total disagrees with `dobj+0x0A` → refuse. That is an
+  independent read of the same fact; if they disagree, one of `numModels`, the
+  model array pointer or `numBones` is not where we think it is, and writing 20
+  bytes at `dobj+0x5C` would be a scribble on a struct we do not understand;
+* `numBones(model0) > 160` → refuse. A partial mask would hide part of the arms
+  and leave the rest, which reads as a rendering bug rather than as a limit;
+* 200 DObjs through the hook with none matching the viewmodel → say so once, in
+  full: an identification that silently matches nothing is the exact failure this
+  file keeps paying for;
+* the hook itself failing to install → say so loudly, because with `noarms.on`
+  present the player is expecting no arms and the log has to be what explains it.
+
+Logging is gated on the DObj signature (pointer, model count, total bones)
+changing, so a rebuild reports once and a repeat call for the same rig stays
+quiet; the bits are re-applied on **every** call regardless, since the engine's
+write above us wipes them each time.
+
+### Status
+
+Builds clean (only the pre-existing `g_flat_logged` warning). **UNVERIFIED AT
+RUNTIME** — nothing here has been in front of the game. What the first playtest
+settles, in this order, from `C:\bo1vr\gameframe.log`:
+
+1. does the hook see the viewmodel DObj at all (the model dump appears);
+2. is model 0 really the viewhands (its name, in that dump);
+3. do the arms go and the gun stay. If the **gun** goes instead, the bit order or
+   the bone-range direction is inverted — the survey called that a convenient
+   self-check and it is.
+
+Attachments ride on the hands (`tag_gasmask`, `tag_clip`) and keep drawing: their
+surfaces reference their own bones at a higher bone offset. If the NVG model also
+turns out to be unwanted in VR it needs its own bone range, the same way.
