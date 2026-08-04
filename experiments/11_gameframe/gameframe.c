@@ -1156,6 +1156,185 @@ static void read_opts(void)
          g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock);
 }
 
+/* ------------------------------------------------- per-frame timing capture
+ *
+ * WHY THIS EXISTS. Trigger 2 (§13) was found with a watchdog and a
+ * thread-suspend autopsy -- instruments built after the fact, each costing
+ * playtests to develop before it could say anything. A per-stage millisecond
+ * record would have named the submit path on the FIRST frozen run, because the
+ * stage that stops advancing IS the stage that hangs.
+ *
+ * The column set is lifted in spirit from Vice City VR's vr_perf_openxr_*.csv
+ * (a reVC fork; x64, D3D12, none of our constraints) which carries
+ * xr_wait_frame_ms / xr_acquire_ms / xr_end_frame_ms / submit_ms and, notably,
+ * counts its own fallbacks and failures as first-class columns. This is that
+ * idea mapped onto the stages THIS plugin actually has.
+ *
+ * A FROZEN FRAME WRITES NO ROW, deliberately. The row is emitted after the
+ * real Present returns, so a hang leaves the last COMPLETED frame as the final
+ * row and g_stage naming where the next one died. A half-written row would
+ * have to be told apart from a merely slow one, and it could not be.
+ *
+ * Rules, because this file has already produced several hangs: no allocation,
+ * no locks, no CRT beyond _snprintf, one fixed buffer appended in a single
+ * WriteFile every PERF_FLUSH frames. It all runs on the render thread that is
+ * already doing this work -- no new thread, no new ordering, nothing for the
+ * submission queue to race against.
+ *
+ * ON BY DEFAULT, disabled with perf.off in C:\bo1vr. Two instruments in this
+ * project were silent when they were finally needed and both runs were wasted;
+ * an off-by-default diagnostic is that same mistake with extra steps. Cost is
+ * ~200 bytes/frame, about 43 MB/hour at 60 fps. */
+#define PERF_FLUSH 64
+#define PERF_BUF   (PERF_FLUSH * 256)
+#define PERF_MAX_STALE_MS 250.0         /* upper bound on rows lost to a hang */
+
+static int    g_perf_on = -1;           /* -1 undecided, 0 off, 1 on */
+static char   g_perf_buf[PERF_BUF];
+static int    g_perf_len;
+static int    g_perf_rows;
+static double g_perf_t0;
+static double g_perf_last_flush;
+static LONG   g_present_n;              /* every Present, VR live or not */
+
+/* Stage timers: written during the frame, read once when the row is emitted.
+ * Per-eye entries are indexed [0]=left [1]=right, matching submit_eye's own
+ * argument so there is no second convention to get wrong. */
+static double g_t_resolve, g_t_wait, g_t_present;
+static double g_t_gate[2], g_t_trans[2], g_t_submit[2];
+static LONG   g_t_spins[2];
+
+/* SUBTRACT A BASELINE IN COUNTER UNITS, THEN CONVERT.
+ *
+ * MEASURED: the first real-game capture quantised every column to exact
+ * multiples of 32 ms. Whole frames fell below one tick and every per-stage
+ * column read 0.000 -- an instrument that reported nothing while looking like
+ * it worked, which is the exact failure this file keeps repeating.
+ *
+ * The cause is not the clock. QPF is 10 MHz (0.1 us) and the log line in
+ * perf_init prints it. It is that D3D9 puts the x87 into SINGLE PRECISION --
+ * a 24-bit mantissa -- for any device created without D3DCREATE_FPU_PRESERVE,
+ * and neither the game (flags=0x40, see the CreateDevice log line) nor
+ * fakegame passes it. The old form computed (double)counter * 1000.0 / freq
+ * on an absolute counter of ~4.3e12; at 24 bits of mantissa the representable
+ * step near counter*1000 is ~2^28 counts, i.e. tens of milliseconds. That is
+ * the 32 ms, and it appeared only once a D3D9 device existed.
+ *
+ * Differencing FIRST makes the subtraction exact in 64-bit integers, so the
+ * double only ever sees a small elapsed count and 24 bits is ample: at 43 ms
+ * elapsed the step is ~3 ns. This is the right form regardless of the FPU
+ * mode, which is why it is not conditional on it. */
+static LARGE_INTEGER g_qpf, g_qpc0;
+
+static double perf_now(void)
+{
+    LARGE_INTEGER c;
+    if (!g_qpf.QuadPart) {
+        if (!QueryPerformanceFrequency(&g_qpf) || !g_qpf.QuadPart) return 0.0;
+        QueryPerformanceCounter(&g_qpc0);
+    }
+    if (!QueryPerformanceCounter(&c)) return 0.0;
+    return (double)(c.QuadPart - g_qpc0.QuadPart) * 1000.0 / (double)g_qpf.QuadPart;
+}
+
+static void perf_flush(void)
+{
+    char path[MAX_PATH];
+    HANDLE h;
+    DWORD w, n;
+
+    if (g_perf_len <= 0) return;
+    n = GetTempPathA(MAX_PATH - 24, path);
+    if (n && n < MAX_PATH - 24) {
+        lstrcatA(path, "bo1vr_frames.csv");
+        h = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            WriteFile(h, g_perf_buf, (DWORD)g_perf_len, &w, NULL);
+            CloseHandle(h);
+        }
+    }
+    g_perf_len = 0;
+}
+
+/* Truncate and write the header once. The freeze harness relaunches the game
+ * repeatedly; appending would let several runs read as one long session, which
+ * is exactly the confusion that made freezerun.sh count non-launches as
+ * passes. */
+static void perf_init(void)
+{
+    static const char hdr[] =
+        "present,frame,elapsed_ms,total_ms,resolve_ms,wait_poses_ms,"
+        "gate_l_ms,trans_l_ms,submit_l_ms,gate_r_ms,trans_r_ms,submit_r_ms,"
+        "present_ms,spins_l,spins_r,gate_timeouts,waitlocks,flat,skipped,"
+        "dual,eye,submits,pose_ticks,stage\n";
+    char path[MAX_PATH];
+    HANDLE h;
+    DWORD w, n;
+
+    g_perf_on = (GetFileAttributesA("C:\\bo1vr\\perf.off") == INVALID_FILE_ATTRIBUTES);
+    if (!g_perf_on) { glog("perf CSV disabled (perf.off)"); return; }
+
+    n = GetTempPathA(MAX_PATH - 24, path);
+    if (!n || n >= MAX_PATH - 24) { g_perf_on = 0; return; }
+    lstrcatA(path, "bo1vr_frames.csv");
+    h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) { g_perf_on = 0; glog("perf CSV: cannot create file"); return; }
+    WriteFile(h, hdr, (DWORD)(sizeof(hdr) - 1), &w, NULL);
+    CloseHandle(h);
+    g_perf_t0 = perf_now();
+    /* Record the clock itself. If the columns ever look quantised again this
+     * line says immediately whether the clock or the code is at fault. */
+    glog("perf CSV live -> %s (QPF=%ld Hz, base=%ld%09ld)", path,
+         (long)g_qpf.QuadPart, (long)(g_qpc0.QuadPart / 1000000000),
+         (long)(g_qpc0.QuadPart % 1000000000));
+}
+
+static void perf_row(double total_ms)
+{
+    int k;
+
+    if (g_perf_on < 0) perf_init();
+    if (!g_perf_on) return;
+
+    /* Flush BEFORE writing if the next row might not fit, so the buffer can
+     * never overrun and _snprintf never has to truncate a row. */
+    if (g_perf_len > PERF_BUF - 256) perf_flush();
+
+    k = _snprintf(g_perf_buf + g_perf_len, PERF_BUF - g_perf_len - 1,
+                  "%ld,%ld,%.1f,%.3f,%.3f,%.3f,"
+                  "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                  "%.3f,%ld,%ld,%ld,%ld,%ld,%ld,"
+                  "%d,%d,%ld,%ld,%ld\n",
+                  g_present_n, g_frames, perf_now() - g_perf_t0, total_ms,
+                  g_t_resolve, g_t_wait,
+                  g_t_gate[0], g_t_trans[0], g_t_submit[0],
+                  g_t_gate[1], g_t_trans[1], g_t_submit[1],
+                  g_t_present, g_t_spins[0], g_t_spins[1],
+                  g_gate_timeouts, g_waitlocks, g_flat_frames, g_skipped,
+                  g_dual, g_cur_eye, g_submitted, g_pose_ticks, g_stage);
+    if (k > 0) g_perf_len += k;
+
+    /* FLUSH ON A TIME BOUND, not only on a row count.
+     *
+     * A count alone loses up to PERF_FLUSH-1 rows, and in a freeze those are
+     * exactly the rows worth having. Not hypothetical: the first bench run of
+     * this code presented 60 frames, never reached the 64-row mark, and wrote a
+     * file containing nothing but the header.
+     *
+     * PERF_MAX_STALE_MS bounds the loss in TIME instead, so it holds at any
+     * frame rate -- whatever the hang, the last row on disk is at most a
+     * quarter second before it, and the watchdog fires at 3 s. Cost is at most
+     * four file opens a second, on a thread already doing this work. */
+    if (++g_perf_rows >= PERF_FLUSH ||
+        perf_now() - g_perf_last_flush > PERF_MAX_STALE_MS) {
+        g_perf_rows = 0;
+        g_perf_last_flush = perf_now();
+        perf_flush();
+    }
+}
+
 static void submit_eye(int i)
 {
     bo1vr_VkImageSubresourceRange sub;
@@ -1164,6 +1343,12 @@ static void submit_eye(int i)
     EVRCompositorError ce;
 
     struct eye_target *E = &g_eyes[i][g_buf];
+    double t0;
+
+    /* Clear FIRST: the early return below would otherwise leave last frame's
+     * numbers in place and the CSV would report work that did not happen. */
+    g_t_gate[i] = g_t_trans[i] = g_t_submit[i] = 0.0;
+    g_t_spins[i] = 0;
 
     read_opts();
     if (!g_vkdev || !E->vktex) return;         /* novk/notex: nothing to submit */
@@ -1196,12 +1381,16 @@ static void submit_eye(int i)
      * frozen game, and the counter turns "is this the race?" into a number. */
     if (E->q && !g_nogate) {
         int spins = 0;
+        t0 = perf_now();
         while (IDirect3DQuery9_GetData(E->q, NULL, 0, D3DGETDATA_FLUSH) == S_FALSE) {
             if (++spins > 200000) { g_gate_timeouts++; break; }
         }
+        g_t_gate[i]  = perf_now() - t0;
+        g_t_spins[i] = spins;
         if (spins > g_gate_max_spins) g_gate_max_spins = spins;
     }
 
+    t0 = perf_now();
     if (!g_notrans)
         g_vkdev->lpVtbl->TransitionTextureLayout(g_vkdev, E->vktex, &sub,
                                                  E->layout,
@@ -1225,13 +1414,16 @@ static void submit_eye(int i)
     tex.handle      = &vkdata;
     tex.eType       = ETextureType_TextureType_Vulkan;
     tex.eColorSpace = EColorSpace_ColorSpace_Auto;
+    g_t_trans[i]    = perf_now() - t0;    /* transitions + flush + queue lock */
 
     /* pBounds is NULL and must stay NULL: xrizer ignores it (Exp. 6), so it is
      * not a way to slice one texture into two eyes -- it would send the whole
      * thing to both. */
+    t0 = perf_now();
     ce = g_nosubmit ? EVRCompositorError_VRCompositorError_None
                     : g_comp->Submit(i == 0 ? EVREye_Eye_Left : EVREye_Eye_Right, &tex, NULL,
                                      EVRSubmitFlags_Submit_Default);
+    g_t_submit[i] = perf_now() - t0;
 
     if (!g_nolock)
         g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
@@ -1263,6 +1455,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
     HRESULT hr;
     LONG n;
     int i;
+    double t_resolve0, t_wait0;
 
     /* The watchdog starts BEFORE the VR-init gate and outside it, so it is
      * running in every configuration -- including the ones where VR is off or
@@ -1359,6 +1552,7 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * which halves each eye's rate and makes the desktop mirror visibly twitch
      * left-right, because the monitor shows every frame and consecutive frames
      * are different eyes. That twitch is what dual view removes. */
+    t_resolve0 = perf_now();
     if (InterlockedExchange(&g_captured, 0) >= 2) {
         if (!g_dual) { glog("DUAL VIEW live: both eyes rendered per frame"); g_dual = 1; }
     } else if (g_dual) {
@@ -1474,12 +1668,18 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      *
      * nowaitlock.on restores the old, racy order for an A/B. */
     g_stage = 2;
+    g_t_resolve = perf_now() - t_resolve0;
+    t_wait0 = perf_now();
     if (!g_nowait) {
         int locked = (!g_nowaitlock && g_vkdev != NULL);
         if (locked) { g_vkdev->lpVtbl->LockSubmissionQueue(g_vkdev); g_waitlocks++; }
         g_comp->WaitGetPoses(g_rposes, 64, g_gposes, 64);
         if (locked) g_vkdev->lpVtbl->ReleaseSubmissionQueue(g_vkdev);
     }
+    /* Includes the queue lock, deliberately: the lock and the wait are one
+     * critical section now (§13) and splitting them in the log would invite
+     * the reading that they are independent. */
+    g_t_wait = perf_now() - t_wait0;
     InterlockedIncrement(&g_pose_ticks);
 
     g_stage = 2;
@@ -1617,14 +1817,32 @@ static void probe_frame(IDirect3DSwapChain9 *sc)
 static HRESULT WINAPI my_sc_present(IDirect3DSwapChain9 *sc, const RECT *a, const RECT *b,
                                     HWND w, const RGNDATA *d, DWORD f)
 {
+    HRESULT hr;
+    double t0 = perf_now(), tp;
+
     start_watchdog();
     read_opts();
+
+    /* Zero the stage timers here rather than in do_frame: do_frame has several
+     * early returns (VR off, VR failed, GetBackBuffer failed, resolve failed)
+     * and each one would otherwise leave the previous frame's numbers in the
+     * row, reporting work that did not happen this frame. */
+    g_present_n++;
+    g_t_resolve = g_t_wait = 0.0;
+
     if (g_probe) probe_frame(sc);
     do_frame(sc);
     /* Call the real Present LAST: the game's own picture still goes to the
      * monitor exactly as before. Nothing above changes the render target, the
      * viewport or any state -- StretchRect and the interop calls do not. */
-    return real_sc_present(sc, a, b, w, d, f);
+    tp = perf_now();
+    hr = real_sc_present(sc, a, b, w, d, f);
+    g_t_present = perf_now() - tp;
+
+    /* The row lands AFTER the real Present, so a frozen frame writes nothing
+     * and the last row plus g_stage says where the next one died. */
+    perf_row(perf_now() - t0);
+    return hr;
 }
 
 static HRESULT WINAPI my_reset(IDirect3DDevice9 *dev, D3DPRESENT_PARAMETERS *pp)
@@ -1742,6 +1960,21 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
     MH_STATUS st;
 
     (void)reserved;
+
+    /* Write out whatever rows are still buffered on a CLEAN shutdown, so the
+     * tail of a session is not silently dropped -- the bench lost 28 of 60
+     * rows that way. WriteFile/CreateFile are safe here: no loader lock is
+     * taken and no CRT startup is required, unlike the thread creation this
+     * file already forbids in DllMain.
+     *
+     * This is a convenience, NOT the freeze guarantee. A frozen game never
+     * reaches DLL_PROCESS_DETACH; the time-bounded flush in perf_row is what
+     * covers that case, and it is the one that matters. */
+    if (reason == DLL_PROCESS_DETACH) {
+        if (g_perf_on > 0) perf_flush();
+        return TRUE;
+    }
+
     if (reason != DLL_PROCESS_ATTACH)
         return TRUE;
 

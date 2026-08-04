@@ -850,3 +850,72 @@ never takes it, so every mid-scene MSAA `StretchRect` tears down the game's
 live render pass) and §11 named the route around it: capture at Present from
 the non-multisampled back buffer, which `probe.on` survived and which the
 `nocap` configuration measured 0/8 above already uses.
+
+## 14. A per-frame timing CSV, and the FPU bug that nearly made it useless
+
+Every diagnostic in this experiment so far was built *after* a failure and cost
+playtests before it could say anything: the watchdog, then the thread-suspend
+autopsy, then `g_waitlocks` to prove the fix had run. The generic version of
+that instrument is a per-stage millisecond record, because the stage that stops
+advancing is the stage that hangs.
+
+The column set is taken in spirit from Vice City VR's `vr_perf_openxr_*.csv`
+(a reVC fork: x64, D3D12, none of our constraints), which carries
+`xr_wait_frame_ms` / `xr_acquire_ms` / `xr_end_frame_ms` / `submit_ms` and
+counts its own fallbacks and failures as first-class columns. Ours maps that
+onto the stages this plugin actually has, written to
+`%TEMP%\bo1vr_frames.csv`, on by default, disabled with `perf.off`.
+
+The row is emitted **after** the real `Present` returns, so a frozen frame
+writes no row at all and the last row plus `stage` names where the next one
+died.
+
+### Two defects the bench caught before a playtest could
+
+**Flushing on a row count alone loses the rows that matter.** The first bench
+run presented 60 frames, never reached the 64-row mark, and wrote a file
+containing nothing but the header. Fixed by bounding staleness in *time*
+(`PERF_MAX_STALE_MS` = 250 ms), which holds at any frame rate, plus a
+`DLL_PROCESS_DETACH` flush for the tail of a clean exit.
+
+**D3D9 sets the x87 to single precision, and it silently destroyed the clock.**
+The first real-game capture quantised *every column* to exact multiples of
+32 ms: whole frames fell below one tick, every per-stage column read `0.000`,
+and the file looked perfectly well-formed. The clock was never the problem --
+`QPF` is 10 MHz. The problem is that D3D9 leaves the x87 with a **24-bit
+mantissa** for any device created without `D3DCREATE_FPU_PRESERVE`, and the
+game does not pass it (`flags=0x40`, see the `CreateDevice` log line). Computing
+`(double)counter * 1000.0 / freq` on an absolute counter of ~4.3e12 then has a
+representable step of tens of milliseconds. Differencing against a baseline in
+64-bit integers *first* removes the dependence entirely; at 43 ms elapsed the
+step is ~3 ns. `perf_init` now logs `QPF` and the base counter so this is
+answerable from the log rather than by re-deriving it.
+
+This is the fourth instrument in this project to look like it worked while
+reporting nothing. The tell is always the same: implausibly clean output.
+
+### What it says about the shipped configuration
+
+4902 frames, dual view live, `nocap.on`, 100 s unattended (`freezerun.sh`):
+
+| stage | mean ms |
+| --- | --- |
+| whole hook | 13.665 |
+| `WaitGetPoses` (incl. queue lock) | **13.335** |
+| left: transitions + flush + lock | 0.243 |
+| left / right `Submit` | 0.024 / 0.022 |
+| right: transitions + flush + lock | 0.022 |
+| resolve | 0.003 |
+| real `Present` | 0.010 |
+| gate spins | 0 |
+
+Two things follow. **We are compositor-paced, not overhead-bound:** 97.6% of
+the frame is the pose wait, and everything this plugin does costs ~0.33 ms.
+**The first eye pays for the queue drain:** left `trans` is 11x right, which is
+`LockSubmissionQueue` draining pending submissions once per frame -- the second
+eye finds nothing left to drain. That asymmetry is not a bug, but it is the
+number to watch if the §13 lock is ever revisited.
+
+The event-query gate never spun once (0 spins across 4902 frames) on the dual
+view path, which is consistent with §12: the gate exists for the resolve path,
+and dual view does not use it.
