@@ -1761,6 +1761,39 @@ static void submit_eye(int i)
 static int (*g_get_aim_ndc)(float *, float *);
 static int g_reticle_state;      /* 0 unknown, 1 live, -1 unavailable */
 
+/* SPREAD, DRY RUN. docs/crosshair-draw-findings.md reports cg_t* at 0x2FF5354
+ * and ps.aimSpreadScale as a float at cg+0x8A890, which the engine's own
+ * crosshair turns into degrees via
+ *     BG_GetSpreadForWeapon(0x406CB0) -> lo,hi
+ *     deg = lo + aimSpreadScale/255 * (hi - lo)
+ * Degrees is the right currency for a VR reticle: unlike the engine's pixel
+ * value it is independent of FOV and target size, so it converts straight into
+ * the NDC we already work in.
+ *
+ * READ ONLY for now. Nothing in that survey has been checked against a live
+ * process, and this session has already had two confident identifications turn
+ * out wrong -- so log the raw scale first and confirm it moves the way spread
+ * should (rises when firing and moving, falls when still and aiming) before any
+ * of it changes what is drawn. */
+#define VA_CG_T            0x2FF5354u
+#define CG_AIMSPREADSCALE  0x8A890u
+
+static void spread_dryrun(void)
+{
+    static long sn;
+    unsigned char *base, *cg;
+    const float *sc;
+
+    if ((sn++ % 300) != 0) return;
+    base = (unsigned char *)GetModuleHandleA(NULL);
+    if (!base) return;
+    cg = *(unsigned char **)(base + (VA_CG_T - GAME_PREFERRED_BASE));
+    if (!mem_readable(cg, CG_AIMSPREADSCALE + 4)) return;
+    sc = (const float *)(cg + CG_AIMSPREADSCALE);
+    glog("spread: cg=%p aimSpreadScale=%.3f (expect 0..255, rising when firing "
+         "or moving, falling when still or aiming)", (void *)cg, *sc);
+}
+
 static void draw_aim_reticle(IDirect3DSurface9 *bb)
 {
     struct { float x, y, z, rhw; D3DCOLOR c; } v[16];
@@ -1772,6 +1805,7 @@ static void draw_aim_reticle(IDirect3DSurface9 *bb)
 
     if (g_reticle_state < 0 || !g_dev || !bb) return;
     if (g_noreticle) return;                  /* noreticle.on: back to the game's own */
+    spread_dryrun();
     if (!g_get_aim_ndc) {
         HMODULE cam = GetModuleHandleA("camera.asi");
         if (cam) g_get_aim_ndc = (int (*)(float *, float *))
