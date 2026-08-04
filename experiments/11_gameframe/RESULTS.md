@@ -1186,3 +1186,45 @@ Wired as `xhair3d.on`, opt-in, because it is a hypothesis and not a finding.
 that `fakegame.exe` exits **5** with no plugins loaded at all, so that code is
 its baseline and not a signal. An earlier note in this session claimed exit 0;
 that was reading `tail`'s status through a pipeline rather than proton's.
+
+## 19. The VR reticle — because the cheap crosshair fix was refuted
+
+`xhair3d.on` was tested and **refuted**: forcing `cg_drawCrosshair` to 0 simply
+removes the crosshair. There is no world-projected `cg_drawCrosshair3D` hiding
+underneath, despite it being registered and defaulting to 1. Playtest: "no cross
+hair now". Switch removed from the live config.
+
+So the reticle has to be ours. The geometry needed no reverse engineering at
+all — `hk_body` already saves the refdef axis before composing head tracking in,
+and that saved forward row is where the weapon points. Projecting it through the
+head-composed basis and the widened tangents (both present in the same function,
+at the same instant) gives the screen position the crosshair should occupy.
+
+Split across the two modules along the line each already owns: `camera.asi`
+knows the view and the projection and exports `bo1vr_camera_get_aim_ndc()` in
+normalised device coordinates; `gameframe.asi` owns the device and the back
+buffer and does the pixel mapping and the draw. Neither learns the other's job.
+
+Drawn at Present into the back buffer **before** the eye resolve, so the reticle
+is in the headset rather than only on the monitor. Three deliberate choices:
+
+* **pre-transformed vertices** (`D3DFVF_XYZRHW`) — no transform state touched,
+  no shader, nothing depending on what the engine left bound;
+* **a state block around it**, captured and applied. We draw one call before the
+  frame is resolved into the eye textures; restoring is the difference between
+  adding a reticle and corrupting what renders next. If `CreateStateBlock`
+  fails the draw is REFUSED rather than done with state we cannot put back;
+* **a cross, not a dot** — a dot vanishes against noise, four short arms read as
+  a sight without occluding the target.
+
+`bo1vr_camera_get_aim_ndc` returns 0 when the aim is behind the viewer, which
+genuinely happens once the player turns far enough round (the #44 case). Drawing
+on a 0 return would place a reticle where the gun is not pointing, which is the
+exact bug the whole thing exists to fix.
+
+**UNTESTED ON HARDWARE.** The bench cannot exercise it — with `novr.on` the VR
+gate returns before `do_frame` reaches the draw — so all the bench establishes is
+that nothing regressed (exit 5, the baseline). Two things to watch on the first
+playtest: whether the reticle sits where shots actually land, and whether drawing
+at Present interacts with the freeze history in §10-§13. Delete `camera.asi`'s
+export or revert this commit to remove it.

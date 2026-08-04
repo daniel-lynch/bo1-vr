@@ -228,6 +228,9 @@ static void check_axis(const char *what, const float *m)
 #define CAM_EYE_CENTRE    2
 
 static volatile LONG g_eye = CAM_EYE_NONE;
+static float g_aim_fwd[3];             /* the game's aim forward, world space   */
+static float g_aim_ndc[2];             /* where that lands in the rendered view */
+static int   g_aim_ndc_ok;
 static int  (*g_get_fov)(int, float *, float *);   /* gameframe.asi's bo1vr_get_eye_fov */
 static unsigned char *g_base;                      /* image base, for the slot watch */
 static unsigned g_max_slots;
@@ -238,6 +241,25 @@ static float         g_ipd_units = 2.6f;   /* see below */
 __declspec(dllexport) void bo1vr_camera_set_eye(int eye)
 {
     InterlockedExchange(&g_eye, eye);
+}
+
+/* WHERE THE WEAPON POINTS, AS NORMALISED DEVICE COORDINATES.
+ *
+ * (0,0) is the centre of the rendered image, +x right, +y up, edges at +/-1.
+ * Returns 0 when there is nothing sensible to report -- no scene rendered yet,
+ * or the aim is behind the viewer, which really happens once the player turns
+ * far enough round. A caller that draws on a 0 return would put a reticle in a
+ * place the gun is not pointing, which is the exact bug this exists to fix.
+ *
+ * gameframe.asi owns the device and the back buffer size, so it does the
+ * pixel mapping; this side knows the view and the projection, so it does the
+ * geometry. Neither has to learn the other's job. */
+__declspec(dllexport) int bo1vr_camera_get_aim_ndc(float *x, float *y)
+{
+    if (!g_aim_ndc_ok || !x || !y) return 0;
+    *x = g_aim_ndc[0];
+    *y = g_aim_ndc[1];
+    return 1;
 }
 
 __declspec(dllexport) void bo1vr_camera_set_ipd_units(float u)
@@ -1163,6 +1185,7 @@ void __cdecl hk_body(void *out, void *in)
         g_aim_yaw   = ht_yaw_of(save_axis) * 57.29578f;
         g_aim_pitch = -asinf(save_axis[2] > 1.0f ? 1.0f :
                             (save_axis[2] < -1.0f ? -1.0f : save_axis[2])) * 57.29578f;
+        memcpy(g_aim_fwd, save_axis, sizeof g_aim_fwd);
         moved = 1;
 
         oriented = headtrack_apply(rd, (int)eye, &head_pos);
@@ -1200,6 +1223,49 @@ void __cdecl hk_body(void *out, void *in)
                 save_fov[0] = *fx; save_fov[1] = *fy;
                 *fx = tx; *fy = ty;
                 fov_set = 1;
+            }
+        }
+
+        /* WHERE THE WEAPON POINTS, IN THIS VIEW.
+         *
+         * Computed HERE because this is the one place where both halves exist
+         * at once: the head-composed basis has just been written into the
+         * refdef, and save_axis still holds the aim the engine built before we
+         * touched it. Project one through the other and the result is the
+         * screen position the crosshair should be at.
+         *
+         * The 2D crosshair is drawn at screen centre, and screen centre is now
+         * wherever the head is looking -- so it does not merely look wrong, it
+         * points somewhere the gun does not. Playtest: "makes accuracy hard
+         * because your head is moving in world space but the gun is in a fixed
+         * place."
+         *
+         * NDC, not pixels, because the consumer knows the target size and this
+         * hook does not. Note the tangents used are the WIDENED ones written
+         * just above -- the same ones the scene is rendered with -- so a
+         * consumer mapping NDC onto the full back buffer lands correctly even
+         * though gameframe.asi later crops the centre out of it.
+         *
+         * Rows are forward, LEFT, up (camera-hook-plan 2.1), so a target to the
+         * left has a positive `l` and belongs at negative NDC x. */
+        if (fov_set) {
+            const float *F = (const float *)(rd + RD_VIEWAXIS);
+            const float *a = g_aim_fwd;
+            float f = a[0]*F[0] + a[1]*F[1] + a[2]*F[2];
+            float l = a[0]*F[3] + a[1]*F[4] + a[2]*F[5];
+            float u = a[0]*F[6] + a[1]*F[7] + a[2]*F[8];
+            /* Behind the viewer, or so near the plane that the divide explodes.
+             * Turning around far enough really does put the gun behind you --
+             * that is the #44 case -- and a reticle smeared to infinity is a
+             * worse answer than no reticle. */
+            if (f > 0.01f) {
+                float nx = -(l / f) / *(float *)(rd + RD_TANHALFFOVX);
+                float ny =  (u / f) / *(float *)(rd + RD_TANHALFFOVY);
+                g_aim_ndc[0] = nx;
+                g_aim_ndc[1] = ny;
+                g_aim_ndc_ok = (nx > -1.5f && nx < 1.5f && ny > -1.5f && ny < 1.5f);
+            } else {
+                g_aim_ndc_ok = 0;
             }
         }
     }

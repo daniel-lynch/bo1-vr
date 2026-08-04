@@ -1724,6 +1724,131 @@ static void submit_eye(int i)
 }
 
 /* Resolve the game's back buffer into both eye targets and submit them. */
+/* ------------------------------------------------------- the VR reticle
+ *
+ * The game's 2D crosshair is drawn at screen centre, and with head tracking
+ * live screen centre is wherever the player is LOOKING, not where the weapon
+ * points. Playtest: "makes accuracy hard because your head is moving in world
+ * space but the gun is in a fixed place."
+ *
+ * The cheap escape was tested first and refuted: BO1 registers cg_drawCrosshair
+ * and cg_drawCrosshair3D, both defaulting to 1, and forcing the 2D one off just
+ * removes the crosshair -- there is no world-projected one hiding underneath.
+ *
+ * So draw our own, where camera.asi says the weapon actually points. Deliberate
+ * choices here:
+ *
+ *   - PRE-TRANSFORMED vertices (D3DFVF_XYZRHW). No world/view/projection state
+ *     is touched, no shader is needed, and nothing depends on what the engine
+ *     happened to leave bound.
+ *   - A STATE BLOCK around it. We are drawing in the middle of somebody else's
+ *     render, one call before their frame is resolved into the eye textures.
+ *     Capturing and restoring is the difference between adding a reticle and
+ *     corrupting whatever the engine does next.
+ *   - A CROSS, not a dot: a single dot vanishes against noise, and four short
+ *     arms read as a sight at a glance without occluding the target.
+ */
+#define RETICLE_ARM   14.0f      /* px, half-length of each arm */
+#define RETICLE_GAP    5.0f      /* px, clear centre so the target stays visible */
+#define RETICLE_THICK  2.0f
+
+static int (*g_get_aim_ndc)(float *, float *);
+static int g_reticle_state;      /* 0 unknown, 1 live, -1 unavailable */
+
+static void draw_aim_reticle(IDirect3DSurface9 *bb)
+{
+    struct { float x, y, z, rhw; D3DCOLOR c; } v[16];
+    D3DSURFACE_DESC d;
+    IDirect3DStateBlock9 *sb = NULL;
+    float nx, ny, cx, cy, w, h;
+    D3DCOLOR col = D3DCOLOR_ARGB(220, 255, 60, 60);
+    int n = 0;
+
+    if (g_reticle_state < 0 || !g_dev || !bb) return;
+    if (!g_get_aim_ndc) {
+        HMODULE cam = GetModuleHandleA("camera.asi");
+        if (cam) g_get_aim_ndc = (int (*)(float *, float *))
+                                 GetProcAddress(cam, "bo1vr_camera_get_aim_ndc");
+        if (!g_get_aim_ndc) {
+            g_reticle_state = -1;
+            glog("reticle: camera.asi has no bo1vr_camera_get_aim_ndc -- no VR reticle "
+                 "(the game's own centre crosshair is all there is)");
+            return;
+        }
+    }
+    if (!g_get_aim_ndc(&nx, &ny)) return;     /* aim behind the viewer, or no scene */
+    if (FAILED(IDirect3DSurface9_GetDesc(bb, &d))) return;
+
+    w = (float)d.Width; h = (float)d.Height;
+    cx = (nx * 0.5f + 0.5f) * w;
+    cy = (0.5f - ny * 0.5f) * h;
+
+    if (g_reticle_state == 0) {
+        g_reticle_state = 1;
+        glog("reticle: LIVE -- aim ndc %.3f %.3f -> pixel %.0f %.0f of %ux%u",
+             nx, ny, cx, cy, d.Width, d.Height);
+    }
+
+    /* Two bars per axis, leaving RETICLE_GAP clear either side of the centre. */
+    {
+        float arms[4][4] = {
+            { cx - RETICLE_GAP - RETICLE_ARM, cy - RETICLE_THICK*0.5f, cx - RETICLE_GAP,               cy + RETICLE_THICK*0.5f },
+            { cx + RETICLE_GAP,               cy - RETICLE_THICK*0.5f, cx + RETICLE_GAP + RETICLE_ARM, cy + RETICLE_THICK*0.5f },
+            { cx - RETICLE_THICK*0.5f, cy - RETICLE_GAP - RETICLE_ARM, cx + RETICLE_THICK*0.5f, cy - RETICLE_GAP },
+            { cx - RETICLE_THICK*0.5f, cy + RETICLE_GAP,               cx + RETICLE_THICK*0.5f, cy + RETICLE_GAP + RETICLE_ARM },
+        };
+        int i;
+        for (i = 0; i < 4; i++) {
+            float x0 = arms[i][0], y0 = arms[i][1], x1 = arms[i][2], y1 = arms[i][3];
+            /* Two triangles as a strip-free list: 6 verts would exceed 16 for
+             * four arms, so draw each arm as its own 2-triangle fan below. */
+            v[n].x = x0; v[n].y = y0; v[n].z = 0.0f; v[n].rhw = 1.0f; v[n].c = col; n++;
+            v[n].x = x1; v[n].y = y0; v[n].z = 0.0f; v[n].rhw = 1.0f; v[n].c = col; n++;
+            v[n].x = x1; v[n].y = y1; v[n].z = 0.0f; v[n].rhw = 1.0f; v[n].c = col; n++;
+            v[n].x = x0; v[n].y = y1; v[n].z = 0.0f; v[n].rhw = 1.0f; v[n].c = col; n++;
+        }
+    }
+
+    if (FAILED(IDirect3DDevice9_CreateStateBlock(g_dev, D3DSBT_ALL, &sb)) || !sb) {
+        /* Refuse rather than draw with unsaved state. A reticle is not worth
+         * whatever the engine renders next coming out wrong. */
+        g_reticle_state = -1;
+        glog("reticle: CreateStateBlock failed -- disabled rather than draw with "
+             "state we cannot put back");
+        return;
+    }
+
+    IDirect3DDevice9_SetRenderTarget(g_dev, 0, bb);
+    IDirect3DDevice9_SetVertexShader(g_dev, NULL);
+    IDirect3DDevice9_SetPixelShader(g_dev, NULL);
+    IDirect3DDevice9_SetFVF(g_dev, D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    IDirect3DDevice9_SetTexture(g_dev, 0, NULL);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_ZENABLE, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_ZWRITEENABLE, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_CULLMODE, D3DCULL_NONE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_LIGHTING, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_FOGENABLE, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_STENCILENABLE, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_ALPHATESTENABLE, FALSE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_ALPHABLENDENABLE, TRUE);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    IDirect3DDevice9_SetRenderState(g_dev, D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    IDirect3DDevice9_SetTextureStageState(g_dev, 0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    IDirect3DDevice9_SetTextureStageState(g_dev, 0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+    IDirect3DDevice9_SetTextureStageState(g_dev, 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    IDirect3DDevice9_SetTextureStageState(g_dev, 0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+
+    {
+        int i;
+        for (i = 0; i < 4; i++)
+            IDirect3DDevice9_DrawPrimitiveUP(g_dev, D3DPT_TRIANGLEFAN, 2,
+                                             &v[i * 4], sizeof v[0]);
+    }
+
+    IDirect3DStateBlock9_Apply(sb);
+    IDirect3DStateBlock9_Release(sb);
+}
+
 static void do_frame(IDirect3DSwapChain9 *sc)
 {
     IDirect3DSurface9 *bb = NULL;
@@ -1827,6 +1952,10 @@ static void do_frame(IDirect3DSwapChain9 *sc)
      * which halves each eye's rate and makes the desktop mirror visibly twitch
      * left-right, because the monitor shows every frame and consecutive frames
      * are different eyes. That twitch is what dual view removes. */
+    /* Before the eyes are filled, so the reticle is IN them rather than only on
+     * the monitor. It goes into the back buffer, which every path below reads. */
+    draw_aim_reticle(bb);
+
     t_resolve0 = perf_now();
     if (InterlockedExchange(&g_captured, 0) >= 2) {
         if (!g_dual) { glog("DUAL VIEW live: both eyes rendered per frame"); g_dual = 1; }
