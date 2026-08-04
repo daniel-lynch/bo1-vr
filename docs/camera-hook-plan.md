@@ -217,15 +217,40 @@ Size is **MEASURED**: `0x6C7F81 push 0x140` (the memset length) and the allocato
 |---|---|---|---|
 | `+0x000` | 0x40 | **viewMatrix** (row-major 4×4) | output of `0x529FD0`, called with `out` as 3rd arg |
 | `+0x040` | 0x40 | **projectionMatrix** (row-major 4×4) | output of `0x589600`, called with `out+0x40` as 4th arg |
-| `+0x080` | 0x40 | viewProjectionMatrix (**ASSUMED**) | slot exists (5×64 stride); not written by `0x6C7F80` |
-| `+0x0C0` | 0x40 | inverseViewProjectionMatrix (**ASSUMED**) | as above |
+| `+0x080` | 0x40 | **viewProjectionMatrix** | corroborated independently — §2.2.1 |
+| `+0x0C0` | 0x40 | **inverseViewProjectionMatrix** | corroborated independently — §2.2.1 |
 | `+0x100` | 16 | **origin** as vec4, `w = 1.0` | `0x6C7F8E`…`0x6C7FB8` |
 | `+0x110` | 12 | **axis[0]** forward | `0x6C7FC4`…`0x6C7FD0` |
 | `+0x11C` | 12 | **axis[1]** left | `0x6C7FD6`…`0x6C7FE8` |
 | `+0x128` | 12 | **axis[2]** up | `0x6C7FF1`…`0x6C8003` |
-| `+0x134` | 4 | constant `-0.1f` (depth-hack near clip) | `0x6C8076` |
+| `+0x134` | 4 | **depthHackNearClip**, constant `-0.1f` here | `0x6C8076` |
 | `+0x138` | 4 | **zNear** (clamped) | `0x6C8050` |
-| `+0x13C` | 4 | unused / zero from memset | — |
+| `+0x13C` | 4 | **zFar** — named, but NOT written by this function | §2.2.1; memset leaves it 0 |
+
+#### 2.2.1 The two ASSUMED slots, corroborated
+
+`xoxor4d/t5-rtx` (an RTX Remix mod for the same `BlackOps.exe`) publishes a
+`GfxViewParms` whose layout is, field for field, the table above — including
+`viewProjectionMatrix` at `+0x80` and `inverseViewProjectionMatrix` at `+0xC0`,
+and naming `+0x13C` as `zFar` where we had recorded "unused".
+
+That is a second, independent derivation agreeing with ours, not proof on its
+own. What makes it decisive is that it survives a check against **our** binary:
+
+* `sizeof(GfxViewParms)` in their header is exactly `0x140` — the memset length
+  at `0x6C7F81` and the `n * 0x140` allocator stride at `0x6C8D80`.
+* Every store into `[edi+...]` across `0x6C7F80..0x6C8090` lands inside one of
+  their declared fields and none lands outside the struct: `0x100`, `0x10c`
+  (`origin`), `0x11c`–`0x130` (`axis`), `0x134` (`depthHackNearClip`), `0x138`
+  (`zNear`).
+
+The cheap runtime test below is therefore no longer needed to *name* the slots,
+only to confirm `+0x80` is populated by the time we want to read it — it is not
+written by `0x6C7F80`, so something downstream fills it.
+
+Provenance: t5-rtx carries **no licence** (all rights reserved). Its addresses
+and struct offsets are facts about BO1, not copyrightable expression, and every
+one used here was re-verified against our own binary. No code is taken from it.
 
 `+0x080` and `+0x0C0` being view-projection and its inverse is **ASSUMED** from the 5×64 stride and
 from the engine's own code-constant name table, which defines `viewProjectionMatrix` (index 213)
