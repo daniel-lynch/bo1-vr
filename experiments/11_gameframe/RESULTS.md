@@ -919,3 +919,68 @@ number to watch if the §13 lock is ever revisited.
 The event-query gate never spun once (0 spins across 4902 frames) on the dual
 view path, which is consistent with §12: the gate exists for the resolve path,
 and dual view does not use it.
+
+## 15. `r_smp_backend 0` refuted — it makes the freeze *more* likely
+
+§14's lead from `xoxor4d/t5-rtx` was that the freeze spin loop at `0x6EBB40` is
+the frame fence of the engine's SMP (separate render thread) backend, so
+turning that backend off might remove trigger 1 at the root and let us drop
+`nocap.on` — which is what currently forces our capture to Present and blocks
+proper per-eye capture (#30).
+
+**It does the opposite.** Behind `smpoff.on`, with everything else at the
+shipped configuration:
+
+| configuration | froze |
+| --- | --- |
+| `nocap.on` only (control) | **0 / 3** (100 s, 100 s, 90 s) |
+| `nocap.on` + `smpoff.on`, per-frame override | 1 / 1 — froze at 49 s |
+| `nocap.on` + `smpoff.on`, registration override | 1 / 1 — froze at 41 s |
+
+Two for two against zero for three is not a large sample, but the direction is
+unambiguous and there is no version of this result that says "adopt it".
+
+### What was actually established
+
+The lever is not in doubt — it demonstrably worked, twice, two different ways:
+
+* `Dvar_RegisterBool("r_smp_backend", 1) -> forcing 0 at registration`, and the
+  dvar then read back `current=0 latched=0`;
+* `smp 1/0` in the frame line — state live, and the engine never once wrote the
+  value back.
+
+So the game really did run with its SMP backend disabled, and froze sooner.
+
+### Facts confirmed on the way, each verified against our own binary
+
+* `dvar_s.current` is at **`+0x18`** — not merely because t5-rtx says so, but
+  because the game's own code does `cmp BYTE PTR [eax+0x18], 0` at `0x6D5815`.
+* `Dvar_RegisterBool` = **`0x45BB20`** — hooked successfully and it intercepted
+  the real registration. Args are cdecl `(name, value, flags, desc)`, read off
+  the push order at `0x6CAD4D..0x6CAD60`.
+* `Dvar_FindVar` = **`0x5AE810`** — returned a dvar whose `name` field read back
+  as exactly `"r_smp_backend"`.
+* `r_smp_backend` registers with a default of **1**, its `dvar_s*` lives at
+  **`0x3B1FB70`**, and it is read in exactly **one** place: the function at
+  `0x6D5810`, which branches to a `Sys_IsMainThread` (`0x5A48F0`) path when the
+  flag is clear.
+
+### An honest limit on what this tested
+
+Both trials ran with `nocap.on` still present, which suppresses trigger 1. So
+the freezes seen here are **not** trigger 1 — they are a new failure mode that
+disabling SMP introduces. Whether `r_smp_backend 0` would also have suppressed
+trigger 1 is now moot: a lever that freezes the shipped configuration cannot be
+the route to removing `nocap.on`, so it was not worth a further run to find out.
+
+### A wrong inference, corrected
+
+The first version of `smp_backend_off()` counted frames where the engine had
+set the value back to 1 and claimed a count stuck at 1 proved the dvar was no
+longer read. That is wrong — reading a value does not modify it, so the counter
+cannot distinguish inert from live. It was settled statically instead (one
+write site, one read site, above). The comment in the source now says so.
+
+The lever stays in the tree, off by default. It is a working, verified
+instrument, and a negative result that cost three runs is worth keeping so it
+is not re-derived.

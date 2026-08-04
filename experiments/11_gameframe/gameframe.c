@@ -152,6 +152,7 @@ static LONG  g_gate_max_spins;
 /* Bisect switches, declared here because interop_init (above the definitions)
  * now consults them too. */
 static int g_opts_read, g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2;
+static int g_smpoff;                /* smpoff.on: force r_smp_backend to 0 */
 static int g_nowaitlock;            /* nowaitlock.on: restore the racy order */
 static LONG g_waitlocks;            /* proof the lock around WaitGetPoses ran */
 static volatile LONG g_gd_calls;
@@ -1152,8 +1153,9 @@ static void read_opts(void)
     g_probe    = opt("probe.on");
     g_probe2   = opt("probe2.on");
     g_nowaitlock = opt("nowaitlock.on");
-    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d",
-         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock);
+    g_smpoff   = opt("smpoff.on");
+    glog("BISECT: nolock=%d notrans=%d nosubmit=%d nogate=%d nowait=%d nocap=%d novk=%d notex=%d noviq=%d noq=%d probe=%d probe2=%d nowaitlock=%d smpoff=%d",
+         g_nolock, g_notrans, g_nosubmit, g_nogate, g_nowait, g_nocap, g_novk, g_notex, g_noviq, g_noq, g_probe, g_probe2, g_nowaitlock, g_smpoff);
 }
 
 /* ------------------------------------------------- per-frame timing capture
@@ -1333,6 +1335,137 @@ static void perf_row(double total_ms)
         g_perf_last_flush = perf_now();
         perf_flush();
     }
+}
+
+/* -------------------------------------- r_smp_backend off (experiment, #32)
+ *
+ * HYPOTHESIS. §10-§12 established that the freeze is the GAME'S OWN render
+ * thread spinning forever on a D3D9 EVENT query that never retires, and that
+ * spin loop (0x6EBB40) is the frame fence of the engine's SMP backend -- its
+ * separate render thread. If `r_smp_backend 0` puts rendering back on the main
+ * thread, that ring may not be driven at all, which would remove trigger 1 at
+ * its root rather than routing around it with nocap.on. nocap.on is exactly
+ * what forces our capture to Present, which is what blocks proper per-eye
+ * capture, so this one lever plausibly unblocks #32 and #30 together.
+ *
+ * xoxor4d/t5-rtx forces this dvar off every frame on this same binary (it
+ * needs a stable draw order for Remix); that is where both the idea and the
+ * dvar_s offsets come from. See docs/t5-rtx-findings.md.
+ *
+ * THE LAYOUT IS USED BUT NOT TRUSTED. Before writing anything we check that
+ * dvar->name reads back as exactly the string we asked for. A wrong offset
+ * would otherwise scribble into live engine state, and that failure would look
+ * like a rendering bug rather than a bad constant. Cheap, and it turns "their
+ * struct is probably right" into a fact this binary confirms.
+ *
+ * OFF BY DEFAULT. smpoff.on enables it. This changes how the engine renders;
+ * it is an A/B experiment for freezeloop.sh, not a default. */
+#define GAME_PREFERRED_BASE 0x400000u
+#define VA_Dvar_FindVar     0x5AE810u
+#define VA_Dvar_RegisterBool 0x45BB20u
+#define DVAR_OFF_FLAGS      0x0C
+#define DVAR_OFF_TYPE       0x10
+#define DVAR_OFF_MODIFIED   0x14
+#define DVAR_OFF_CURRENT    0x18
+#define DVAR_OFF_LATCHED    0x28
+
+typedef void *(__cdecl *pfn_dvar_findvar)(const char *);
+typedef void *(__cdecl *pfn_dvar_regbool)(const char *, int, unsigned int, const char *);
+
+static int   g_smp_state;        /* 0 looking, 1 live, -1 gave up */
+static void *g_smp_dvar;
+static LONG  g_smp_resets;       /* frames the engine had put it back to 1 */
+static int   g_smp_registered;   /* 1 once we intercepted the registration */
+static pfn_dvar_regbool real_regbool;
+
+/* Registration-time override -- see the note at the hook site in DllMain.
+ * Only r_smp_backend is touched; every other bool dvar passes through
+ * untouched, which matters because this runs for ALL of them. */
+static void *__cdecl my_regbool(const char *name, int value, unsigned int flags, const char *desc)
+{
+    if (name && value && lstrcmpA(name, "r_smp_backend") == 0) {
+        glog("smpoff: Dvar_RegisterBool(\"%s\", %d) -> forcing 0 at registration", name, value);
+        g_smp_registered = 1;
+        value = 0;
+    }
+    return real_regbool(name, value, flags, desc);
+}
+
+static int mem_readable(const void *p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!p || !VirtualQuery(p, &mbi, sizeof(mbi))) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return 0;
+    return (SIZE_T)((const char *)mbi.BaseAddress + mbi.RegionSize - (const char *)p) >= n;
+}
+
+static void smp_backend_off(void)
+{
+    static const char NAME[] = "r_smp_backend";
+    static int tries;
+    unsigned char *base, *d;
+    pfn_dvar_findvar find;
+    const char *nm;
+
+    if (g_smp_state < 0) return;
+
+    if (!g_smp_dvar) {
+        /* The dvar may not be registered at our first Present. Retry, but give
+         * up LOUDLY rather than silently doing nothing forever -- a switch that
+         * quietly does nothing is how three earlier trials in this project were
+         * wasted. */
+        if (++tries > 600) {
+            g_smp_state = -1;
+            glog("smpoff: \"%s\" never appeared in %d frames -- DISABLED, nothing was changed",
+                 NAME, tries);
+            return;
+        }
+        base = (unsigned char *)GetModuleHandleA(NULL);
+        if (!base) return;
+        find = (pfn_dvar_findvar)(base + (VA_Dvar_FindVar - GAME_PREFERRED_BASE));
+        d = (unsigned char *)find(NAME);
+        if (!d) return;                       /* not registered yet -- next frame */
+
+        if (!mem_readable(d, 0x30)) {
+            g_smp_state = -1;
+            glog("smpoff: dvar at %p is not readable -- DISABLED, nothing was changed", (void *)d);
+            return;
+        }
+        nm = *(const char **)d;               /* dvar_s.name at +0 */
+        if (!mem_readable(nm, sizeof(NAME)) || lstrcmpA(nm, NAME) != 0) {
+            g_smp_state = -1;
+            glog("smpoff: LAYOUT CHECK FAILED -- dvar %p name reads '%s', expected '%s'. Writing nothing.",
+                 (void *)d, mem_readable(nm, 2) ? nm : "(unreadable)", NAME);
+            return;
+        }
+
+        g_smp_dvar = d;
+        g_smp_state = 1;
+        glog("smpoff: \"%s\" at %p type=%d flags=0x%08lx current=%d latched=%d -- forcing off",
+             NAME, (void *)d, *(int *)(d + DVAR_OFF_TYPE),
+             *(unsigned long *)(d + DVAR_OFF_FLAGS),
+             (int)*(unsigned char *)(d + DVAR_OFF_CURRENT),
+             (int)*(unsigned char *)(d + DVAR_OFF_LATCHED));
+    }
+
+    d = (unsigned char *)g_smp_dvar;
+    /* Frames where the value had come back as 1. This counts WRITE-BACKS by the
+     * engine and nothing else -- it says nothing about whether the dvar is
+     * READ, because reading does not modify. An earlier version of this comment
+     * claimed a count stuck at 1 proved the lever was inert; that inference was
+     * simply wrong.
+     *
+     * Settled statically instead: the dvar pointer global is 0x3B1FB70, written
+     * once at registration (0x6CAD65) and read in exactly one place, the
+     * function at 0x6D5810, which does `cmp BYTE PTR [eax+0x18], 0` and
+     * branches to a Sys_IsMainThread path when clear. So it IS live, it IS read
+     * per call, and 0x18 is confirmed as current.enabled by the game's own
+     * code rather than only by our name check. */
+    if (*(unsigned char *)(d + DVAR_OFF_CURRENT)) g_smp_resets++;
+    *(unsigned char *)(d + DVAR_OFF_CURRENT)  = 0;
+    *(unsigned char *)(d + DVAR_OFF_LATCHED)  = 0;
+    *(unsigned char *)(d + DVAR_OFF_MODIFIED) = 0;
 }
 
 static void submit_eye(int i)
@@ -1732,9 +1865,10 @@ static void do_frame(IDirect3DSwapChain9 *sc)
         g_set_eye(g_cur_eye);
 
     if (n == 1 || n == 2 || (n % 600) == 0)
-        glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts, %ld waitlocks",
+        glog("frame %ld: %ld submits, %ld ticks, %ld flat, %ld skipped, gate max %ld spins, %ld timeouts, %ld waitlocks, smp %d/%ld",
              n, g_submitted, g_pose_ticks, g_flat_frames, g_skipped,
-             g_gate_max_spins, g_gate_timeouts, g_waitlocks);
+             g_gate_max_spins, g_gate_timeouts, g_waitlocks,
+             g_smp_state, g_smp_resets);
 }
 
 /* ------------------------------------------------------------------ hooks */
@@ -1829,6 +1963,10 @@ static HRESULT WINAPI my_sc_present(IDirect3DSwapChain9 *sc, const RECT *a, cons
      * row, reporting work that did not happen this frame. */
     g_present_n++;
     g_t_resolve = g_t_wait = 0.0;
+
+    /* Before do_frame: if this lever works at all it has to be in force for the
+     * frame the game is about to build, not the one it just finished. */
+    if (g_smpoff) smp_backend_off();
 
     if (g_probe) probe_frame(sc);
     do_frame(sc);
@@ -2021,5 +2159,34 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
         glog("armed at Direct3DCreate9=%p", fn);
     else
         glog("FAILED to hook Direct3DCreate9");
+
+    /* SET r_smp_backend BEFORE THE RENDERER EXISTS.
+     *
+     * The per-frame override in smp_backend_off() flips the value while an SMP
+     * backend is already up and running, and the one trial of that froze at
+     * 49 s in a configuration that had survived four runs before it. n=1 proves
+     * nothing on a stochastic freeze, but flipping a backend selector mid-flight
+     * is a bad shape regardless: the render thread it selects between is already
+     * started.
+     *
+     * Registration is the right moment. Dvar_RegisterBool is 0x45BB20 -- read
+     * straight off the call at 0x6CAD60, whose args are pushed
+     * (desc, flags=0, value=1, name="r_smp_backend"), i.e. cdecl
+     * (name, value, flags, desc), matching t5-rtx's declaration. Forcing value
+     * to 0 there means the engine never selects the SMP path at all, rather
+     * than being told to change its mind later.
+     *
+     * DllMain of an ASI runs before WinMain, so this hook is in place long
+     * before the dvar is registered. */
+    if (opt("smpoff.on")) {
+        unsigned char *gb = (unsigned char *)GetModuleHandleA(NULL);
+        void *t = gb ? (void *)(gb + (VA_Dvar_RegisterBool - GAME_PREFERRED_BASE)) : NULL;
+        if (t && MH_CreateHook(t, (void *)my_regbool, (void **)&real_regbool) == MH_OK &&
+            MH_EnableHook(t) == MH_OK)
+            glog("smpoff: Dvar_RegisterBool hooked at %p -- r_smp_backend will REGISTER as 0", t);
+        else
+            glog("smpoff: FAILED to hook Dvar_RegisterBool at %p -- falling back to the "
+                 "per-frame override only", t);
+    }
     return TRUE;
 }
