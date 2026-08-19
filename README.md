@@ -1,9 +1,11 @@
 # bo1-vr
 
-A native VR mod for **Call of Duty: Black Ops (2010)**, built for **Linux** —
+A native VR mod for **Call of Duty: Black Ops (2010)**, built for **Linux** (Should work on Windows but is untested, see below) —
 the game runs under Proton, and the mod feeds it straight into your headset
 through xrizer and any OpenXR runtime (Monado, WiVRn, or SteamVR's OpenXR
 runtime).
+
+> Note from maintainer -- I started this project out of curiosity. Its nowhere near complete but its a start. Tested on Ubuntu 24.04 via WiVRn. I plan to continue working on this but have paused for now until I feel like picking up again. Feel free to use/contribute!
 
 No game files are modified. The mod injects into the live, Steam-launched,
 CEG-protected `BlackOps.exe` via a DLL shim in the Wine prefix, hooks the
