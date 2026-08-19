@@ -1,0 +1,23 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the MinGW cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686
+      - name: Build and verify the loader
+        run: make
+      - name: Build the VR plugins
+        run: |
+          make -C experiments/11_gameframe out/gameframe.asi
+          make -C experiments/13_camera all
+          make -C experiments/14_headtrack check

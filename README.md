@@ -2,8 +2,8 @@
 
 A native VR mod for **Call of Duty: Black Ops (2010)**, built for **Linux** —
 the game runs under Proton, and the mod feeds it straight into your headset
-through xrizer and any OpenXR runtime (Monado, WiVRn, SteamVR via
-OpenComposite-style paths).
+through xrizer and any OpenXR runtime (Monado, WiVRn, or SteamVR's OpenXR
+runtime).
 
 No game files are modified. The mod injects into the live, Steam-launched,
 CEG-protected `BlackOps.exe` via a DLL shim in the Wine prefix, hooks the
@@ -11,10 +11,12 @@ engine from the inside, and does its own D3D9 → Vulkan hand-off to the
 compositor through DXVK's interop interfaces.
 
 **Status: working in-headset, not yet packaged for players.** Head-tracked
-stereo rendering of the real game is confirmed live on hardware. Motion-control
+rendering of the real game is confirmed live on hardware. Motion-control
 weapon aim is the current frontier — the injection points are located and a
-controller-aimed reticle already draws, but aim is not yet written into the
-engine.
+reticle already draws at the weapon's true aim point, but controller aim is
+not yet written into the engine. Single-player and zombies only: the
+multiplayer game is a separate executable this project never touches, and
+injecting DLLs into any online game is a ban risk regardless.
 
 ## What works today
 
@@ -27,18 +29,18 @@ raw output in `experiments/*/RESULTS.md`.
 - **The game's own frames in the headset** — the D3D9 back buffer resolved and
   submitted to the compositor per eye, via DXVK's `ID3D9VkInterop*` interfaces
   (exp 10, 11)
-- **True stereo** — two scene renders per frame, per-eye projection with the
-  headset's own FOV, world scale (exp 11)
+- **Stereo rendering** — two scene renders per frame, per-eye projection with
+  the headset's own FOV (exp 11)
 - **Head tracking** — position and orientation, hooked into the engine's
   `R_SetViewParms` with the OpenVR→CoD basis change proven not-mirrored by an
   offline math check (exp 12, 13, 14)
-- **Groundwork for motion controls** — controller poses, a reticle drawn where
-  the weapon points, viewmodel arms hidden while keeping the weapon
-  (exp 12, 13; `docs/`)
+- **Groundwork for motion controls** — controller poses, and a reticle drawn
+  at the weapon's true aim point (exp 11, 12; `docs/`)
 
-In progress (feasibility proven, not yet wired): motion-controlled weapon aim,
-ADS with motion controls, physical reload, weapon-bone drive, HUD on a
-world-space quad. The `docs/` directory holds the findings for each.
+In progress (feasibility proven or wired, but not yet playtested): motion-
+controlled weapon aim, world scale, hiding the viewmodel arms (`noarms`), ADS
+with motion controls, physical reload, weapon-bone drive, HUD on a world-space
+quad. The `docs/` directory holds the findings for each.
 
 ## Requirements
 
@@ -65,18 +67,53 @@ make toolchain-check     # verifies i686-w64-mingw32-gcc is present
 make                     # -> dist/dinput8.dll, then runs `make verify`
 ```
 
-There is no one-command player install yet. The current end-to-end setup —
-staging the OpenVR runtime, installing the prefix-side shim, and launching —
-is scripted per experiment:
+That builds the loader only. There is no one-command player install yet — the
+end-to-end setup is scripted per experiment, in this order:
 
-- `experiments/09_noinstall/install.sh` — install/remove the loader in the
-  game's Proton prefix (touches only the prefix, never the game directory)
-- `experiments/11_gameframe/setup-runtime.sh` — stage the xrizer runtime so a
-  32-bit PE can load it
-- `experiments/11_gameframe/RESULTS.md` §2 — the launch-option story, measured
+1. `make` — the ASI loader, `dist/dinput8.dll`.
+2. `make -C experiments/11_gameframe install` and
+   `make -C experiments/13_camera install` — the VR plugins
+   (`gameframe.asi`, `camera.asi`), copied to `drive_c/bo1vr` in the game's
+   Proton prefix, where the loader scans (override `PLUGDIR=` if your Steam
+   library isn't the default one).
+3. `tools/patch-proton-wow64-vrclient.py` — apply the two wow64 vrclient
+   fixes to a hard-linked copy of Proton, and run the game with that copy.
+4. `experiments/09_noinstall/install.sh` — put the winmm shim and loader into
+   the prefix (touches only the prefix, never the game directory).
+5. `experiments/11_gameframe/setup-runtime.sh` — stage the xrizer runtime so
+   a 32-bit PE can load it.
+6. Set the launch option from Requirements and start the game from Steam —
+   `experiments/11_gameframe/RESULTS.md` §2 is the measured story behind it.
 
 Start at `experiments/07_ingame/` and read forward if you want the full path
 into the running game.
+
+## Windows
+
+**Untested — nothing in this repo has ever been run on Windows.** That said,
+nothing in the design is Linux-specific either, and most of the setup above is
+Linux plumbing that simply doesn't exist on Windows: no Proton to patch, no
+WoW64 concerns, no runtime staging, no launch option. The expected recipe:
+
+- **SteamVR** as the OpenVR runtime, in place of xrizer/Monado.
+- **DXVK's 32-bit `d3d9.dll` next to `BlackOps.exe`.** This is required, not
+  optional: the mod submits frames through DXVK's `ID3D9VkInterop*`
+  interfaces, which Microsoft's native D3D9 does not implement.
+  [DXVK](https://github.com/doitsujin/dxvk) runs fine on Windows on GPUs with
+  current Vulkan drivers.
+- **The loader chain in the game directory**: the `winmm.dll` shim, the ASI
+  loader, and the `.asi` plugins beside the exe. The shim already handles this
+  placement — it resolves the real `winmm.dll` from the system directory when
+  no `winmm_real.dll` is present (`experiments/07_ingame/winmm_shim.c`).
+- **Building**: the same MinGW toolchain via MSYS2's mingw32 environment, or
+  cross-compile from Linux/WSL exactly as above.
+
+The honest unknowns, in this repo's spirit of not claiming what hasn't been
+measured: whether SteamVR's compositor accepts these Vulkan submissions as
+readily as xrizer does, and whether CEG on Windows tolerates the extra DLLs in
+the game directory the way it demonstrably does under Proton (exp 7). If you
+try it, an issue reporting the result — either way — would be genuinely
+useful.
 
 ## Repository layout
 
@@ -84,7 +121,8 @@ into the running game.
 src/                 the ASI loader (dinput8.dll): proxy, VEH, .asi scan, logging
 experiments/         numbered, self-contained; each RESULTS.md is the evidence
   00–06                toolchain + VR-chain foundation (no game involved)
-  07–14                inside the real game: injection, frames, stereo, tracking
+  07–14                the real-game phase: injection, frames, stereo, tracking
+                       (12 and 14 are offline modules feeding it)
 docs/                engine findings and plans (camera, input, weapons, HUD, …)
   toolchain-notes.md   the build/configuration decisions and their reasons
   address-map.md       verified BlackOps.exe addresses this work rests on
@@ -101,7 +139,12 @@ fits together).
 
 ## Contributing
 
-Issues and PRs welcome. The house rule this repo was built under: **claims get
+Issues and PRs welcome. A note on ids you'll see around the repo: `BAC-nnn`
+(and the occasional `#nn`) refer to the private issue tracker this was built
+against before publication — they're kept for provenance, and everything they
+decided is written out in `docs/` and the RESULTS files.
+
+The house rule this repo was built under: **claims get
 measured**. Every experiment records what was actually observed, negative
 results included, and the docs mark unverified statements as ASSUMED. Keeping
 that discipline is what makes the address map and the findings trustworthy.

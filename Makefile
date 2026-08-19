@@ -192,6 +192,10 @@ toolchain-check:
 		     exit 1; }
 
 # BO1_DIR should point at the directory containing BlackOps.exe.
+#
+# NOTE: this is the legacy bench route, and it writes into the game directory.
+# The shipping route writes nothing there: the winmm shim goes into the Proton
+# prefix instead -- use experiments/09_noinstall/install.sh (see Exp. 7/9).
 BO1_DIR ?= $(HOME)/.local/share/Steam/steamapps/common/Call of Duty Black Ops
 install: $(TARGET)
 	@test -d "$(BO1_DIR)" || { echo "BO1_DIR does not exist: $(BO1_DIR)"; exit 1; }

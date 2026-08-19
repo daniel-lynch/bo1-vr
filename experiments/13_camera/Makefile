@@ -57,7 +57,8 @@ verify: out/camera.asi
 	@echo "==> the head-orientation maths must pass its own check"
 	@$(MAKE) -s -C $(HEADTRK) check
 
-PLUGDIR ?= /mnt/games/steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
+# Override PLUGDIR if your Steam library is not the default one.
+PLUGDIR ?= $(HOME)/.local/share/Steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
 install: out/camera.asi
 	@mkdir -p $(PLUGDIR)
 	cp $< $(PLUGDIR)/

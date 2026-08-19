@@ -1,5 +1,8 @@
 # apitrace on this game, without touching the Steam install
 
+> Lab notes from the dev machine — the paths below are where things were
+> installed there; adjust to your own.
+
 Installed 2026-08-03. Both builds live in `/home/dlynch/dev/reference/apitrace`
 (outside this repo — they are third-party binaries, not ours to vendor):
 

@@ -79,7 +79,8 @@ verify: out/poses_selftest.asi out/poses_mathcheck.exe out/poses.o
 check: out/poses_mathcheck.exe
 	wine out/poses_mathcheck.exe
 
-PLUGDIR ?= /mnt/games/steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
+# Override PLUGDIR if your Steam library is not the default one.
+PLUGDIR ?= $(HOME)/.local/share/Steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
 install: out/poses_selftest.asi
 	@mkdir -p $(PLUGDIR)
 	cp $< $(PLUGDIR)/

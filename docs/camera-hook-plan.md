@@ -655,11 +655,14 @@ found is the five `call` sites in §1.1.
 ## 7. Reproducing this analysis
 
 ```sh
-cd /home/dlynch/dev/bo1-vr/research/engine
+cd research/engine                # from the repo root
 python3 d.py  6c7f80 60          # disassemble
 python3 fs.py 6c7f80             # function summary with string annotations
 python3 cx.py 6c7f80             # call xrefs
 ```
+
+The scripts find `BlackOps.exe` in the default Steam library; set
+`BO1_EXE=/path/to/BlackOps.exe` if yours lives elsewhere.
 
 The wider displacement/absolute-memory index used for the struct mapping is not checked in; it is
 regenerated in ~13 s by a resyncing linear sweep of `.text` that restarts capstone on each decode

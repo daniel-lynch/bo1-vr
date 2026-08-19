@@ -17,7 +17,7 @@
 # when something has gone wrong.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-GHIDRA="${GHIDRA:-$HOME/dev/re4vr-port/tools/ghidra_12.1.2_PUBLIC}"
+GHIDRA="${GHIDRA:?set GHIDRA to your Ghidra install dir (e.g. ~/tools/ghidra_12.1.2_PUBLIC)}"
 PROJDIR="${PROJDIR:-$HOME/dev/reference/bo1-ghidra}"
 PROJ="${PROJ:-bo1}"
 

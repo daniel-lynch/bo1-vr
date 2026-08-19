@@ -249,9 +249,10 @@ WATCHDOG: no frame for 150 s, stuck at stage 0 (idle), pose ticks 399
 game's own render loop never calls Present again. The compositor is healthy and
 xrizer did not crash. So we do not hang — we leave the game's renderer wedged.
 
-### The lead, from `~/dev/re4vr-research-private/render-submit-sync-RE.md`
+### The lead, from a private research note (its findings restated here)
 
-That document reverse-engineers the same class of bug in a VrApi→OpenXR shim:
+That document — a write-up of the same bug class in a VrApi→OpenXR shim, not
+part of this repo — reverse-engineers it as follows:
 the app's eye render has **not yet been `vkQueueSubmit`ed** when the shim
 resolves and releases the swapchain image, so the compositor reads an unwritten
 image. Its measured tell was that `vkQueueWaitIdle` had *no effect* — there was

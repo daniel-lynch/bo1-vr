@@ -34,7 +34,8 @@ verify: out/d3d9hook.asi
 
 # Drop into the prefix's plugin directory (Exp. 9: C:\bo1vr, inside the Wine
 # prefix, so the game install stays untouched).
-PLUGDIR ?= /mnt/games/steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
+# Override PLUGDIR if your Steam library is not the default one.
+PLUGDIR ?= $(HOME)/.local/share/Steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
 install: out/d3d9hook.asi
 	@mkdir -p $(PLUGDIR)
 	cp $< $(PLUGDIR)/

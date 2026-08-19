@@ -1,5 +1,9 @@
 import struct, sys, re, bisect, os
-PATH="/mnt/games/steam/steamapps/common/Call of Duty Black Ops/BlackOps.exe"
+PATH=os.environ.get("BO1_EXE") or next((p for p in [
+    os.path.expanduser("~/.local/share/Steam/steamapps/common/Call of Duty Black Ops/BlackOps.exe"),
+    "/mnt/games/steam/steamapps/common/Call of Duty Black Ops/BlackOps.exe",
+] if os.path.exists(p)), None)
+if not PATH: sys.exit("BlackOps.exe not found; set BO1_EXE=/path/to/BlackOps.exe")
 data=open(PATH,'rb').read()
 e_lfanew=struct.unpack_from('<I',data,0x3c)[0]
 assert data[e_lfanew:e_lfanew+4]==b'PE\0\0'

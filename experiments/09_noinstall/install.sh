@@ -41,7 +41,26 @@
 #     write plus a client restart, and the client is often mid-session.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PFXDIR="${PFXDIR:-/mnt/games/steam/steamapps/compatdata/42700/pfx}"
+
+# Find the BO1 Proton prefix (app 42700). Checked in order: $PFXDIR from the
+# environment, the default Steam library, then every library listed in
+# libraryfolders.vdf (which is how a game on a second disk is found).
+if [ -z "${PFXDIR:-}" ]; then
+  for lib in "$HOME/.local/share/Steam" \
+             $(grep -oP '"path"\s+"\K[^"]+' \
+               "$HOME/.local/share/Steam/steamapps/libraryfolders.vdf" 2>/dev/null); do
+    if [ -d "$lib/steamapps/compatdata/42700/pfx" ]; then
+      PFXDIR="$lib/steamapps/compatdata/42700/pfx"; break
+    fi
+  done
+fi
+[ -n "${PFXDIR:-}" ] || {
+  echo "could not find the BO1 Proton prefix (steamapps/compatdata/42700/pfx)." >&2
+  echo "run the game once under Proton, or set PFXDIR=/path/to/that/pfx" >&2
+  exit 1
+}
+# steamapps/compatdata/42700/pfx -> steamapps/common/... in the same library.
+GAMEDIR="${PFXDIR%/compatdata/*}/common/Call of Duty Black Ops"
 SW="$PFXDIR/drive_c/windows/syswow64"
 REG="$PFXDIR/user.reg"
 SRC="$HERE/../07_ingame/out"
@@ -124,7 +143,7 @@ install)
   # from a real failure (Exp. 8 §6a).
   rm -f "$PFXDIR/drive_c/users/steamuser/AppData/Local/Activision/CoD/__BlackOps"
   echo "installed. nothing in the game install was touched:"
-  find "/mnt/games/steam/steamapps/common/Call of Duty Black Ops" -maxdepth 1 \
+  find "$GAMEDIR" -maxdepth 1 \
        -newermt "-10 minutes" 2>/dev/null | sed 's/^/  recently modified: /'
   ;;
 remove)

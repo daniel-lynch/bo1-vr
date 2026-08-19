@@ -1,7 +1,7 @@
 # Motion controls: what exists, what is missing, and the injection point
 
-Status as of the "how close are we?" question. Short answer: **the two hard
-halves are done and the join is located.** What remains is real work, but it is
+A status snapshot: how close is this to working motion controls? Short answer:
+**the two hard halves are done and the join is located.** What remains is real work, but it is
 wiring rather than discovery.
 
 ## 1. What already exists

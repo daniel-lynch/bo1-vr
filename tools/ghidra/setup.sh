@@ -19,10 +19,10 @@
 # 0x6EBB40) reads correctly straight off the file.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-GHIDRA="${GHIDRA:-$HOME/dev/re4vr-port/tools/ghidra_12.1.2_PUBLIC}"
+GHIDRA="${GHIDRA:?set GHIDRA to your Ghidra install dir (e.g. ~/tools/ghidra_12.1.2_PUBLIC)}"
 PROJDIR="${PROJDIR:-$HOME/dev/reference/bo1-ghidra}"
 PROJ="${PROJ:-bo1}"
-EXE="${EXE:-/mnt/games/steam/steamapps/common/Call of Duty Black Ops/BlackOps.exe}"
+EXE="${EXE:-$HOME/.local/share/Steam/steamapps/common/Call of Duty Black Ops/BlackOps.exe}"
 
 [ -x "$GHIDRA/support/analyzeHeadless" ] || { echo "no analyzeHeadless at $GHIDRA" >&2; exit 1; }
 [ -f "$EXE" ] || { echo "no BlackOps.exe at $EXE" >&2; exit 1; }

@@ -39,8 +39,8 @@
 /* ------------------------------------------------------------------------- */
 /* Addresses. Every one of these was derived from our own disassembly of       */
 /* BlackOps.exe (md5 2b179a57416680b60462c5af05552ea2); see RESULTS.md §"the   */
-/* address work" for the exact instructions each came from. docs/address-map.md */
-/* on branch bac-276-address-map is the wider survey.                          */
+/* address work" for the exact instructions each came from.                    */
+/* docs/address-map.md is the wider survey.                                    */
 /* ------------------------------------------------------------------------- */
 
 #define A_IMAGEBASE           0x00400000u

@@ -37,7 +37,8 @@ verify: out/gameframe.asi
 	@if $(OBJDUMP) -p $< | grep -qi libgcc; then echo "FAIL: libgcc"; exit 1; \
 	 else echo "OK: no libgcc runtime dependency"; fi
 
-PLUGDIR ?= /mnt/games/steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
+# Override PLUGDIR if your Steam library is not the default one.
+PLUGDIR ?= $(HOME)/.local/share/Steam/steamapps/compatdata/42700/pfx/drive_c/bo1vr
 install: out/gameframe.asi
 	@mkdir -p $(PLUGDIR)
 	cp $< $(PLUGDIR)/
