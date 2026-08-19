@@ -1,0 +1,24 @@
+screenshot   : /home/dlynch/dev/bo1-vr/experiments/06_visual/out/peek_swap_3.png  1280x720
+source eye   : 896x1007, peek half 640x720
+
+LEFT half   background      (15, 109, 32)   -> the RIGHT eye's colour (dark green), delta 1
+LEFT half   corner TL      (255, 255, 0)   -> TL       yellow
+LEFT half   corner TR      (0, 255, 255)   -> TR       cyan
+LEFT half   corner BL      (255, 0, 255)   -> BL       magenta
+LEFT half   corner BR      (0, 0, 255)     -> BR       blue
+LEFT half   grey ramp       want   0  36  72 109 145 182 218 255
+LEFT half                   got    0  36  72 109 145 182 218 255
+RIGHT half  background      (140, 15, 15)   -> the LEFT eye's colour (dark red), delta 1
+RIGHT half  corner TL      (255, 255, 0)   -> TL       yellow
+RIGHT half  corner TR      (0, 255, 255)   -> TR       cyan
+RIGHT half  corner BL      (255, 0, 255)   -> BL       magenta
+RIGHT half  corner BR      (0, 0, 255)     -> BR       blue
+RIGHT half  grey ramp       want   0  36  72 109 145 182 218 255
+RIGHT half                  got    0  36  72 109 145 182 218 255
+
+EYE ORDER        : SWAPPED -- left content is being presented to the right eye
+ORIENTATION left : CORRECT -- up is up, no mirroring
+ORIENTATION right: CORRECT -- up is up, no mirroring
+COLOUR           : CLEAN -- grey ramp survives end to end, worst step off by 0/255
+
+RESULT: FAIL

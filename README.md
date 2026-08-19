@@ -3,13 +3,15 @@
 VR mod scaffolding for **Call of Duty: Black Ops (2010)** running under Proton on Linux.
 
 This repository is the toolchain foundation. It contains a working 32-bit
-`dinput8.dll` ASI loader and six verification experiments. **It hooks nothing in
-the game yet** — but the VR chain itself is no longer hypothetical. A 32-bit
+`dinput8.dll` ASI loader and seven verification experiments. **It hooks nothing
+in the game yet** — but the VR chain itself is no longer hypothetical. A 32-bit
 mingw DLL running under Proton gets a **live OpenVR function table** from
-xrizer/Monado and calls through it (`experiments/04_live_fntable/`), and it
+xrizer/Monado and calls through it (`experiments/04_live_fntable/`), it
 **renders a D3D9 texture through DXVK and submits it for both eyes, with the
-frames observed arriving at Monado** (`experiments/05_submit/`). No VR hardware
-is involved in either.
+frames observed arriving at Monado** (`experiments/05_submit/`), and the
+composited result has been **photographed off the compositor and checked
+pixel by pixel** — right eye, right way up, right colours
+(`experiments/06_visual/`). No VR hardware is involved in any of them.
 
 ---
 
@@ -25,10 +27,11 @@ is involved in either.
 | Exp. 3 — winedbg on a 32-bit target | **answered — works far better than expected** |
 | Exp. 4 — **live OpenVR FnTable from 32-bit under Proton** | **PASS** — non-NULL table, methods called, `WaitGetPoses` returns a valid HMD pose |
 | Exp. 5 — **D3D9/DXVK texture submitted to the compositor** | **PASS** — 600 frames × 2 eyes, counted arriving inside `monado-service` |
+| Exp. 6 — **what the compositor received, photographed** | **PASS** — eye order, orientation and colour all correct; found that xrizer ignores `pBounds` |
 
 Full commands and raw output live in `experiments/*/RESULTS.md`.
-`experiments/04_live_fntable/run.sh` and `experiments/05_submit/run.sh` reproduce
-the two gating results end to end.
+`experiments/04_live_fntable/run.sh`, `experiments/05_submit/run.sh` and
+`experiments/06_visual/run.sh` reproduce the three gating results end to end.
 
 ---
 
@@ -354,6 +357,32 @@ Two corollaries worth remembering:
   Releasing D3D9 first makes `IVRClientCore_003_Cleanup` fault with `0xc0000005`
   and the process never exits.
 
+### 12. Submit `pBounds = NULL`, one render target per eye, and no flip
+
+Settled by photographing the compositor's output in Exp. 6. Read
+`experiments/06_visual/RESULTS.md` before changing it.
+
+The submitted image arrives **the right way up, in the right eye, with the right
+colours** — verified by submitting per-eye test patterns with an unambiguous
+up/down and left/right and screenshotting Monado's own `XRT_WINDOW_PEEK` window.
+Two control runs (eyes deliberately swapped; pattern deliberately drawn upside
+down) come back visibly wrong, so this is a measurement and not an assumption.
+
+* **No vertical flip is needed.** "D3D9 is top-down" does not imply one here:
+  DXVK's backing `VkImage` puts row 0 at the top, xrizer copies it verbatim into
+  the OpenXR swapchain image, and Monado samples it with the same convention.
+  A flip is an OpenGL problem, and we submit `TextureType_Vulkan`.
+* **`pBounds` is ignored.** Submitting `VRTextureBounds_t{0,1,1,0}` produces a
+  pixel-identical picture to `pBounds = NULL`, while Proton's own trace shows a
+  non-NULL pointer arriving at `vrclient`. xrizer discards it. So a mod **cannot**
+  render both eyes into one wide texture and submit it twice with different
+  `uMin`/`uMax` — that pattern silently sends the whole texture to both eyes.
+  Allocate one render target per eye, as Exp. 5 and 6 do.
+* **No colour-space correction is needed.** Monado hands out a
+  `VK_FORMAT_B8G8R8A8_SRGB` swapchain for our `B8G8R8A8_UNORM` image, which is
+  the shape a double-sRGB bug takes — but an eight-step grey ramp survives the
+  round trip exactly, so nothing is applying a transfer function twice.
+
 ---
 
 ## Corrections to the original research
@@ -505,6 +534,12 @@ experiments/
     run.sh                    one-command reproduction, incl. Monado-side verification
     d3d9_dxvk.h               C bindings for DXVK's ID3D9VkInterop* interfaces
     vk_min.h / vkcheck.c      the Vulkan slice we need, + a static-assert check
+  06_visual/                GATE 3: what the compositor received, photographed
+    run.sh                    one-command reproduction: 3 answers + 2 controls
+    visual.c                  per-eye test pattern, drawn with Clear() rect lists
+    vkxlibsurface.c           Vulkan layer that unblocks Monado's peek window
+    analyse.py                reads the verdict out of the screenshot's pixels
+    images/                   the captured screenshots and their analyses
 tools/
   patch-proton-wow64-vrclient.py   works around two Proton wow64 vrclient bugs
 ```

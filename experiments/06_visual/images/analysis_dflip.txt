@@ -1,0 +1,24 @@
+screenshot   : /home/dlynch/dev/bo1-vr/experiments/06_visual/out/peek_dflip_3.png  1280x720
+source eye   : 896x1007, peek half 640x720
+
+LEFT half   background      (140, 15, 15)   -> the LEFT eye's colour (dark red), delta 1
+LEFT half   corner TL      (255, 0, 255)   -> BL       magenta  <-- expected TL
+LEFT half   corner TR      (0, 0, 255)     -> BR       blue  <-- expected TR
+LEFT half   corner BL      (255, 255, 0)   -> TL       yellow  <-- expected BL
+LEFT half   corner BR      (0, 255, 255)   -> TR       cyan  <-- expected BR
+LEFT half   grey ramp       want   0  36  72 109 145 182 218 255
+LEFT half                   got   57  57  57  57  57  57  57  57
+RIGHT half  background      (15, 109, 32)   -> the RIGHT eye's colour (dark green), delta 1
+RIGHT half  corner TL      (255, 0, 255)   -> BL       magenta  <-- expected TL
+RIGHT half  corner TR      (0, 0, 255)     -> BR       blue  <-- expected TR
+RIGHT half  corner BL      (255, 255, 0)   -> TL       yellow  <-- expected BL
+RIGHT half  corner BR      (0, 255, 255)   -> TR       cyan  <-- expected BR
+RIGHT half  grey ramp       want   0  36  72 109 145 182 218 255
+RIGHT half                  got   52  52  52  52  52  52  52  52
+
+EYE ORDER        : CORRECT -- the left eye's content is in the left eye
+ORIENTATION left : VERTICALLY FLIPPED -- the image is upside down
+ORIENTATION right: VERTICALLY FLIPPED -- the image is upside down
+COLOUR           : SHIFTED -- grey ramp step 7 off by 203/255; a double sRGB conversion looks exactly like this
+
+RESULT: FAIL
